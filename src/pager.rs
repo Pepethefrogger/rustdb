@@ -1,11 +1,11 @@
 use std::io::Seek;
-use std::{io, iter};
+use std::{io, iter, ptr};
 use std::fs;
 use std::os::unix::fs::FileExt;
 
 use crate::tree::{AlignedSize, InternalNodeCell, LeafNodeCell, INTERNAL_NODE_CELL_SIZE, LEAF_NODE_CELL_KEY_SIZE};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct PageNum(pub usize);
 
@@ -99,17 +99,21 @@ pub enum NodeMut<'a> {
     LeafNode(&'a mut LeafNodeHeader),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(align(8))]
 pub struct Page([u8; PAGE_SIZE]);
 
 impl Page {
     pub fn page_header(&self) -> &PageHeader {
-        unsafe { &*((self as *const Page) as *const PageHeader) }
+        unsafe { std::mem::transmute(ptr::from_ref(self)) }
     }
 
     pub fn page_header_mut(&mut self) -> &mut PageHeader {
-        unsafe { &mut *((self as *mut Page) as *mut PageHeader) }
+        unsafe { std::mem::transmute(ptr::from_ref(self)) }
+    }
+
+    fn metadata(&mut self) -> &mut MetadataPage {
+        unsafe { std::mem::transmute(ptr::from_ref(self)) }
     }
 
     pub fn initialize_leaf_node(page: &mut Self, parent: PageNum) {
@@ -123,6 +127,11 @@ impl Page {
         } else {
             unreachable!()
         }
+    }
+
+    pub fn initialize_metadata_page(page: &mut Self, root: PageNum) {
+        let metadata = page.metadata();
+        metadata.root = root;
     }
 }
 
@@ -168,6 +177,10 @@ impl<'a> PageHeader {
     }
 }
 
+pub struct MetadataPage {
+    pub root: PageNum,
+}
+
 pub struct Pager {
     file: fs::File,
     num_pages: usize,
@@ -180,10 +193,17 @@ impl Pager {
         let num_pages = length / PAGE_SIZE;
         let mut pager = Self{file: file, num_pages, pages: vec![]};
         if num_pages == 0 {
-            let page = pager.get_page(PageNum(0))?;
-            Page::initialize_leaf_node(page, PageNum(0));
+            let root_page = PageNum(1);
+            let metadata_page = pager.get_page(PageNum(0))?;
+            Page::initialize_metadata_page(metadata_page, root_page);
+            let root_page = pager.get_page(root_page)?;
+            Page::initialize_leaf_node(root_page, PageNum(0));
         }
         Ok(pager)
+    }
+
+    pub fn get_metadata(&mut self) -> io::Result<&mut MetadataPage> {
+        Ok(self.get_page(PageNum(0))?.metadata())
     }
 
     pub fn get_page(&mut self, page_num: PageNum) -> io::Result<&mut Page> {
@@ -200,7 +220,8 @@ impl Pager {
                 if page_num.0 >= self.num_pages {
                     return Ok(page_slot.as_mut().unwrap())
                 }
-                self.file.read_exact_at(&mut page_slot.as_mut().unwrap().0, page_num.0 as u64)?;
+                let page_offset = page_num.0 * PAGE_SIZE;
+                self.file.read_exact_at(&mut page_slot.as_mut().unwrap().0, page_offset as u64)?;
                 Ok(page_slot.as_mut().unwrap())
             }
         }

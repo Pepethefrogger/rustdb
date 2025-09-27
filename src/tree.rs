@@ -1,6 +1,8 @@
-use std::{cell::RefCell, fs, io, ptr, slice};
+use std::{fs, io, slice};
 
-use crate::pager::{leaf_cells_max, LeafNodeHeader, Node, NodeMut, PageNum, Pager, LEAF_NODE_HEADER_SIZE, PAGE_HEADER_SIZE};
+use derivative::Derivative;
+
+use crate::pager::{leaf_cells_max, NodeMut, PageNum, Pager};
 
 pub struct InternalNodeCell {
     pub key: usize,
@@ -26,7 +28,10 @@ impl LeafNodeCell {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct Cursor<'a> {
+    #[derivative(Debug="ignore")]
     pub table: &'a mut Table,
     pub page_num: PageNum,
     pub cell_num: usize,
@@ -79,7 +84,7 @@ impl<'a> Cursor<'a> {
 
     // Resets the cursor to point at the root node
     pub fn reset(&mut self) {
-        self.page_num = self.table.root;
+        self.page_num = self.table.get_root();
     }
 
     /// Creates an entry with the key, you can use the cursor to replace the value
@@ -127,17 +132,28 @@ pub struct Table {
 }
 
 impl<'a> Table {
-    pub fn new(pager: Pager, entry_size: usize) -> Self {
+    pub fn new(mut pager: Pager, entry_size: usize) -> io::Result<Self> {
         let aligned_entry_size = size_aligned(entry_size, 8);
         let max_leaf_cells = leaf_cells_max(aligned_entry_size.0);
         // let total_size = PAGE_HEADER_SIZE + LEAF_NODE_HEADER_SIZE + max_leaf_cells * (LEAF_NODE_CELL_KEY_SIZE + aligned_entry_size.0);
         // println!("Aligned entry size {}, max leaf cells {}, total size {}", aligned_entry_size.0, max_leaf_cells, total_size);
-        Self{pager: pager.into(), root: PageNum(0), entry_size, aligned_entry_size, max_leaf_cells}
+        let root = pager.get_metadata()?.root;
+        Ok(Self{pager: pager, root: root, entry_size, aligned_entry_size, max_leaf_cells})
+    }
+
+    pub fn get_root(&self) -> PageNum {
+        self.root
+    }
+
+    pub fn set_root(&mut self, page: PageNum) -> io::Result<()> {
+        self.pager.get_metadata()?.root = page;
+        self.root = page;
+        Ok(())
     }
 
     pub fn from_file(file: fs::File, entry_size: usize) -> io::Result<Self> {
         let pager = Pager::new(file)?;
-        Ok(Table::new(pager, entry_size))
+        Ok(Table::new(pager, entry_size)?)
     }
 
     pub fn cursor(&'a mut self) -> Cursor<'a> {
