@@ -1,6 +1,6 @@
 use std::slice;
 
-use rustdb::tree::Table;
+use rustdb::{pager::leaf_cells_max, tree::Table};
 use tempfile::tempfile;
 
 #[test]
@@ -32,6 +32,17 @@ fn test_persistence() {
 }
 
 #[test]
+fn test_duplicate_key() {
+    let entry = 8;
+    let entry_size = std::mem::size_of_val(&entry);
+
+    let file = tempfile().unwrap();
+    let mut table = Table::from_file(file.try_clone().unwrap(), entry_size).unwrap();
+    table.insert(0, slice::from_ref(&entry)).unwrap();
+    table.insert(0, slice::from_ref(&entry)).expect_err("Should return duplicate key");
+}
+
+#[test]
 fn test_insert_some() {
     let entries = 0u8..20;
     let entry_size = std::mem::size_of::<u8>();
@@ -46,5 +57,26 @@ fn test_insert_some() {
         let data = table.find(e as usize).unwrap();
         // println!("Retrieved {} from index {}, should be {}", data[0], e, e);
         assert_eq!(data[0], e);
+    });
+}
+
+#[test]
+fn test_split_leaf_node() {
+    let entry_size = std::mem::size_of::<usize>();
+    let file = tempfile().unwrap();
+    let mut table = Table::from_file(file, entry_size).unwrap();
+
+    let max_entries_per_leaf = table.max_leaf_cells;
+    println!("max entries per leaf {}", max_entries_per_leaf);
+    let entries = 0usize..(max_entries_per_leaf + max_entries_per_leaf / 2);
+
+    entries.clone().for_each(|e| {
+        // println!("Inserting {} at index {}", e, e);
+        table.insert(e as usize, &e.to_ne_bytes()).unwrap()
+    });
+    entries.for_each(|e| {
+        let data = table.find(e as usize).unwrap();
+        // println!("Retrieved {} from index {}, should be {}", data[0], e, e);
+        assert_eq!(usize::from_ne_bytes(data.try_into().expect("Data didn't fit")), e);
     });
 }
