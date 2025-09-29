@@ -1,12 +1,14 @@
 use std::cell::{RefCell, UnsafeCell};
 use std::fmt::Debug;
+use std::fs;
 use std::io::Seek;
 use std::marker::PhantomData;
-use std::{io, iter, ptr};
-use std::fs;
 use std::os::unix::fs::FileExt;
+use std::{io, iter, ptr};
 
-use crate::tree::{Size, InternalNodeCell, LeafNodeCell, INTERNAL_NODE_CELL_SIZE, LEAF_NODE_CELL_KEY_SIZE};
+use crate::tree::{
+    INTERNAL_NODE_CELL_SIZE, InternalNodeCell, LEAF_NODE_CELL_KEY_SIZE, LeafNodeCell, Size,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
@@ -49,25 +51,51 @@ impl Debug for InternalNodeHeader<'_> {
 
 const INTERNAL_NODE_HEADER_SIZE: usize = std::mem::size_of::<InternalNodeHeader>();
 impl<'page> InternalNodeHeader<'page> {
+    unsafe fn cell_raw<'a>(&self, i: usize) -> *mut InternalNodeCell<'a> {
+        unsafe {
+            let first_cell = (self as *const Self).add(1) as *mut InternalNodeCell;
+            first_cell.add(i)
+        }
+    }
+
     pub fn cell(&self, i: usize) -> &'page InternalNodeCell<'page> {
-        assert!(i < INTERNAL_NODE_CELL_COUNT, "Tried to access out of bounds cell");
-        let first_cell = unsafe { (self as *const Self).add(1) } as *const InternalNodeCell;
-        unsafe { &*first_cell.add(i) }
+        assert!(
+            i < INTERNAL_NODE_CELL_COUNT,
+            "Tried to access out of bounds cell"
+        );
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(self.cell_raw(i))
+        }
     }
     pub fn cell_mut(&mut self, i: usize) -> &'page mut InternalNodeCell<'page> {
-        assert!(i < INTERNAL_NODE_CELL_COUNT, "Tried to access out of bounds cell");
-        let first_cell = unsafe { (self as *const Self).add(1) } as *mut InternalNodeCell;
-        unsafe { &mut *first_cell.add(i) }
+        assert!(
+            i < INTERNAL_NODE_CELL_COUNT,
+            "Tried to access out of bounds cell"
+        );
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(self.cell_raw(i))
+        }
+    }
+    pub fn move_cell(&mut self, src: usize, dst: usize) {
+        debug_assert!(src != dst, "Can't move a cell to itself");
+        unsafe {
+            let src_cell = self.cell_raw(src) as *const InternalNodeCell;
+            let dst_cell = self.cell_raw(dst);
+            (*dst_cell).clone_from(&*src_cell);
+        }
     }
     pub fn is_root(&self) -> bool {
         self.parent_ptr.is_null()
     }
 
-    pub fn find(&mut self, key: usize) -> PageNum {
+    /// Finds the index that this key needs to be inserted in
+    pub fn find_index(&self, key: usize) -> usize {
         let mut min_index = 0;
         let mut max_index_past_one = self.num_keys;
         while min_index != max_index_past_one {
-            let index  = (min_index + max_index_past_one) / 2;
+            let index = (min_index + max_index_past_one) / 2;
             let key_at_index = self.cell(index).key;
             if key_at_index == key {
                 min_index = index;
@@ -80,23 +108,44 @@ impl<'page> InternalNodeHeader<'page> {
             }
         }
 
-        if min_index == self.num_keys {
+        min_index
+    }
+
+    /// Find the page that contains the given key
+    pub fn find(&self, key: usize) -> PageNum {
+        let index = self.find_index(key);
+        if index == self.num_keys {
             self.right_child
         } else {
-            self.cell(min_index).ptr
+            self.cell(index).ptr
         }
+    }
+
+    /// Inserts a key and value in the correct place
+    pub fn insert(&mut self, key: usize, ptr: PageNum) {
+        let index = self.find_index(key);
+        if index < self.num_keys {
+            // Make space for new cell, shift elements to the right: next = prev
+            for i in (index..self.num_keys).rev() {
+                self.move_cell(i - 1, i);
+            }
+            self.cell_mut(index).initialize(key, ptr);
+        } else {
+            self.cell_mut(index).initialize(key, self.right_child);
+            self.right_child = ptr;
+        }
+        self.num_keys += 1;
     }
 }
 
 const FREE_INTERNAL_NODE_SIZE: usize = PAGE_SIZE - INTERNAL_NODE_HEADER_SIZE - PAGE_HEADER_SIZE;
 pub const INTERNAL_NODE_CELL_COUNT: usize = FREE_INTERNAL_NODE_SIZE / INTERNAL_NODE_CELL_SIZE;
 
-
 pub const LEAF_NODE_HEADER_SIZE: usize = std::mem::size_of::<LeafNodeHeader>();
 pub struct LeafNodeHeader<'page> {
     pub parent_ptr: PageNum,
     pub num_cells: usize,
-    phantom: PhantomData<&'page mut Page>
+    phantom: PhantomData<&'page mut Page>,
 }
 
 pub struct DebugLeaf<'a> {
@@ -125,10 +174,9 @@ impl Debug for DebugLeaf<'_> {
     }
 }
 
-
 impl LeafNodeHeader<'_> {
     pub fn debug(&self, size: Size) -> DebugLeaf<'_> {
-        DebugLeaf{leaf: self, size}
+        DebugLeaf { leaf: self, size }
     }
 }
 
@@ -145,10 +193,16 @@ impl<'page> LeafNodeHeader<'page> {
     }
 
     pub fn cell(&self, i: usize, entry_size: Size) -> &'page LeafNodeCell<'page> {
-        unsafe { &*self.cell_raw(i, entry_size) as &LeafNodeCell }
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(self.cell_raw(i, entry_size))
+        }
     }
     pub fn cell_mut(&mut self, i: usize, entry_size: Size) -> &'page mut LeafNodeCell<'page> {
-        unsafe { &mut *self.cell_raw(i, entry_size) as &mut LeafNodeCell }
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(self.cell_raw(i, entry_size))
+        }
     }
     pub fn move_cell(&mut self, src: usize, dst: usize, entry_size: Size) {
         debug_assert!(src != dst, "Can't move a cell to itself");
@@ -161,7 +215,8 @@ impl<'page> LeafNodeHeader<'page> {
     pub fn is_root(&self) -> bool {
         self.parent_ptr.is_null()
     }
-    pub fn find(&'page mut self, key: usize, entry_size: Size) -> usize {
+
+    fn find_index(&self, key: usize, entry_size: Size) -> usize {
         let mut min_index = 0;
         let mut max_index_past_one = self.num_cells;
         while min_index != max_index_past_one {
@@ -178,17 +233,32 @@ impl<'page> LeafNodeHeader<'page> {
         }
         min_index
     }
-    pub fn make_space_for_key(&mut self, index: usize, entry_size: Size, max_leaf_cells: usize) {
-        if self.num_cells >= max_leaf_cells {
-            unimplemented!("Splitting leaf nodes isn't implemented");
-        }
+
+    /// Finds the cell index for the given key
+    /// Can be used for retrieving as well as inserting
+    pub fn find(&self, key: usize, entry_size: Size) -> usize {
+        self.find_index(key, entry_size)
+    }
+
+    pub fn insert_at_index(&mut self, index: usize, key: usize, value: &[u8], entry_size: Size) {
         if index < self.num_cells {
-            // Make space for new cell, shift elements to the right: next = prev
+            // make space for new cell, shift elements to the right: next = prev
             for i in (index..self.num_cells).rev() {
-                self.move_cell(i-1, i, entry_size);
+                self.move_cell(i - 1, i, entry_size);
             }
         }
+        self.cell_mut(index, entry_size)
+            .initialize(key, value, entry_size);
         self.num_cells += 1;
+    }
+
+    pub fn insert(&mut self, key: usize, value: &[u8], entry_size: Size) {
+        let index = self.find_index(key, entry_size);
+        self.insert_at_index(index, key, value, entry_size);
+    }
+
+    pub const fn split_count(max_leaf_cells: usize) -> usize {
+        max_leaf_cells.div_ceil(2)
     }
 }
 
@@ -233,15 +303,24 @@ pub struct Page([u8; PAGE_SIZE]);
 
 impl Page {
     pub fn page_header(&self) -> &PageHeader<'_> {
-        unsafe { std::mem::transmute(ptr::from_ref(self)) }
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(ptr::from_ref(self))
+        }
     }
 
     pub fn page_header_mut(&mut self) -> &mut PageHeader<'_> {
-        unsafe { std::mem::transmute(ptr::from_ref(self)) }
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(ptr::from_ref(self))
+        }
     }
 
     fn metadata(&mut self) -> &mut MetadataPage {
-        unsafe { std::mem::transmute(ptr::from_ref(self)) }
+        #[allow(clippy::transmute_ptr_to_ref)]
+        unsafe {
+            std::mem::transmute(ptr::from_ref(self))
+        }
     }
 
     pub fn initialize_leaf_node(page: &mut Self, parent: PageNum) -> &LeafNodeHeader<'_> {
@@ -257,7 +336,13 @@ impl Page {
         }
     }
 
-    pub fn initialize_internal_node(page: &mut Self, parent: PageNum, key: usize, left_child: PageNum, right_child: PageNum) -> &InternalNodeHeader<'_> {
+    pub fn initialize_internal_node(
+        page: &mut Self,
+        parent: PageNum,
+        key: usize,
+        left_child: PageNum,
+        right_child: PageNum,
+    ) -> &InternalNodeHeader<'_> {
         let header = page.page_header_mut();
         header.node_type = NodeType::InternalNode;
         let node = header.node_mut();
@@ -284,14 +369,14 @@ pub const PAGE_HEADER_SIZE: usize = std::mem::size_of::<PageHeader>();
 #[repr(align(8))]
 pub struct PageHeader<'page> {
     node_type: NodeType,
-    phantom: PhantomData<&'page mut Page>
+    phantom: PhantomData<&'page mut Page>,
 }
 
 impl<'page> PageHeader<'page> {
     pub fn node(&self) -> Node<'page> {
         let header_ptr = self as *const Self;
         // println!("header ptr: {:?}", header_ptr);
-        let node_ptr = unsafe { header_ptr.add(1)};
+        let node_ptr = unsafe { header_ptr.add(1) };
         // println!("node ptr: {:?}", node_ptr);
         match self.node_type {
             NodeType::InternalNode => {
@@ -308,7 +393,7 @@ impl<'page> PageHeader<'page> {
     pub fn node_mut(&mut self) -> NodeMut<'page> {
         let header_ptr = self as *mut Self;
         // println!("header ptr: {:?}", header_ptr);
-        let node_ptr = unsafe { header_ptr.add(1)};
+        let node_ptr = unsafe { header_ptr.add(1) };
         // println!("node ptr: {:?}", node_ptr);
         match self.node_type {
             NodeType::InternalNode => {
@@ -337,7 +422,11 @@ impl Pager {
     pub fn new(mut file: fs::File) -> io::Result<Self> {
         let length = file.seek(io::SeekFrom::End(0))? as usize;
         let num_pages = length / PAGE_SIZE;
-        let pager = Self{file: file, num_pages, pages: vec![].into()};
+        let pager = Self {
+            file,
+            num_pages,
+            pages: vec![].into(),
+        };
         if num_pages == 0 {
             let root_page = PageNum(1);
             let metadata_page = pager.get_page(PageNum(0))?;
@@ -352,10 +441,12 @@ impl Pager {
         Ok(self.get_page(PageNum(0))?.metadata())
     }
 
-    pub fn get_page<'page>(&'page self, page_num: PageNum) -> io::Result<&'page mut Page> {
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_page(&self, page_num: PageNum) -> io::Result<&mut Page> {
         let len = self.pages.borrow().len();
         if page_num.0 >= len {
-            self.pages.borrow_mut()
+            self.pages
+                .borrow_mut()
                 .extend(iter::repeat_with(|| UnsafeCell::new(None)).take(page_num.0 - len + 1));
         }
 
@@ -380,7 +471,9 @@ impl Pager {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
-        let biggest_page_index = self.pages.borrow()
+        let biggest_page_index = self
+            .pages
+            .borrow()
             .iter()
             .enumerate()
             .rev()
