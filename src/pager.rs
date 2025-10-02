@@ -38,7 +38,7 @@ impl Debug for InternalNodeHeader<'_> {
             .field("is_root", &self.is_root())
             .finish()?;
         for i in 0..self.num_keys {
-            let cell = self.cell(i);
+            let cell = self.cell_unchecked(i);
             write!(f, "\n\t")?;
             f.debug_struct("InternalCell")
                 .field("key", &cell.key)
@@ -58,21 +58,21 @@ impl<'page> InternalNodeHeader<'page> {
         }
     }
 
-    pub fn cell(&self, i: usize) -> &'page InternalNodeCell<'page> {
-        assert!(
-            i < INTERNAL_NODE_CELL_COUNT,
-            "Tried to access out of bounds cell"
-        );
+    pub fn cell_unchecked(&self, i: usize) -> &'page InternalNodeCell<'page> {
+        // assert!(
+        //     i < INTERNAL_NODE_CELL_COUNT,
+        //     "Tried to access out of bounds cell"
+        // );
         #[allow(clippy::transmute_ptr_to_ref)]
         unsafe {
             std::mem::transmute(self.cell_raw(i))
         }
     }
-    pub fn cell_mut(&mut self, i: usize) -> &'page mut InternalNodeCell<'page> {
-        assert!(
-            i < INTERNAL_NODE_CELL_COUNT,
-            "Tried to access out of bounds cell"
-        );
+    pub fn cell_mut_unchecked(&mut self, i: usize) -> &'page mut InternalNodeCell<'page> {
+        // assert!(
+        //     i < INTERNAL_NODE_CELL_COUNT,
+        //     "Tried to access out of bounds cell"
+        // );
         #[allow(clippy::transmute_ptr_to_ref)]
         unsafe {
             std::mem::transmute(self.cell_raw(i))
@@ -96,9 +96,9 @@ impl<'page> InternalNodeHeader<'page> {
         let mut max_index_past_one = self.num_keys;
         while min_index != max_index_past_one {
             let index = (min_index + max_index_past_one) / 2;
-            let key_at_index = self.cell(index).key;
+            let key_at_index = self.cell_unchecked(index).key;
             if key_at_index == key {
-                min_index = index;
+                min_index = index + 1;
                 break;
             }
             if key < key_at_index {
@@ -117,7 +117,7 @@ impl<'page> InternalNodeHeader<'page> {
         if index == self.num_keys {
             self.right_child
         } else {
-            self.cell(index).ptr
+            self.cell_unchecked(index).ptr
         }
     }
 
@@ -127,11 +127,12 @@ impl<'page> InternalNodeHeader<'page> {
         if index < self.num_keys {
             // Make space for new cell, shift elements to the right: next = prev
             for i in (index..self.num_keys).rev() {
-                self.move_cell(i - 1, i);
+                self.move_cell(i, i + 1);
             }
-            self.cell_mut(index).initialize(key, ptr);
+            self.cell_mut_unchecked(index).initialize(key, ptr);
         } else {
-            self.cell_mut(index).initialize(key, self.right_child);
+            self.cell_mut_unchecked(index)
+                .initialize(key, self.right_child);
             self.right_child = ptr;
         }
         self.num_keys += 1;
@@ -161,7 +162,7 @@ impl Debug for DebugLeaf<'_> {
             .field("is_root", &self.leaf.is_root())
             .finish()?;
         for i in 0..self.leaf.num_cells {
-            let cell = self.leaf.cell(i, self.size);
+            let cell = self.leaf.cell_unchecked(i, self.size);
             let key = cell.key;
             let value = cell.data(self.size);
             write!(f, "\n\t")?;
@@ -192,13 +193,17 @@ impl<'page> LeafNodeHeader<'page> {
         }
     }
 
-    pub fn cell(&self, i: usize, entry_size: Size) -> &'page LeafNodeCell<'page> {
+    pub fn cell_unchecked(&self, i: usize, entry_size: Size) -> &'page LeafNodeCell<'page> {
         #[allow(clippy::transmute_ptr_to_ref)]
         unsafe {
             std::mem::transmute(self.cell_raw(i, entry_size))
         }
     }
-    pub fn cell_mut(&mut self, i: usize, entry_size: Size) -> &'page mut LeafNodeCell<'page> {
+    pub fn cell_mut_unchecked(
+        &mut self,
+        i: usize,
+        entry_size: Size,
+    ) -> &'page mut LeafNodeCell<'page> {
         #[allow(clippy::transmute_ptr_to_ref)]
         unsafe {
             std::mem::transmute(self.cell_raw(i, entry_size))
@@ -221,7 +226,7 @@ impl<'page> LeafNodeHeader<'page> {
         let mut max_index_past_one = self.num_cells;
         while min_index != max_index_past_one {
             let index = (min_index + max_index_past_one) / 2;
-            let key_at_index = self.cell(index, entry_size).key;
+            let key_at_index = self.cell_unchecked(index, entry_size).key;
             if key_at_index == key {
                 return index;
             }
@@ -244,10 +249,10 @@ impl<'page> LeafNodeHeader<'page> {
         if index < self.num_cells {
             // make space for new cell, shift elements to the right: next = prev
             for i in (index..self.num_cells).rev() {
-                self.move_cell(i - 1, i, entry_size);
+                self.move_cell(i, i + 1, entry_size);
             }
         }
-        self.cell_mut(index, entry_size)
+        self.cell_mut_unchecked(index, entry_size)
             .initialize(key, value, entry_size);
         self.num_cells += 1;
     }
@@ -273,15 +278,28 @@ pub enum Node<'page> {
     LeafNode(&'page LeafNodeHeader<'page>),
 }
 
+impl<'page> Node<'page> {
+    pub fn internal(self) -> Option<&'page InternalNodeHeader<'page>> {
+        match self {
+            Self::InternalNode(internal) => Some(internal),
+            _ => None,
+        }
+    }
+
+    pub fn leaf(self) -> Option<&'page LeafNodeHeader<'page>> {
+        match self {
+            Self::LeafNode(leaf) => Some(leaf),
+            _ => None,
+        }
+    }
+}
+
 pub enum NodeMut<'page> {
     InternalNode(&'page mut InternalNodeHeader<'page>),
     LeafNode(&'page mut LeafNodeHeader<'page>),
 }
 
 impl<'page> NodeMut<'page> {
-    // pub fn covariant<'b>(self) -> NodeMut<'b, 'page> where 'b: 'reference {
-    //     unsafe { std::mem::transmute(self) }
-    // }
     pub fn internal(self) -> Option<&'page mut InternalNodeHeader<'page>> {
         match self {
             Self::InternalNode(internal) => Some(internal),
@@ -323,17 +341,13 @@ impl Page {
         }
     }
 
-    pub fn initialize_leaf_node(page: &mut Self, parent: PageNum) -> &LeafNodeHeader<'_> {
+    pub fn initialize_leaf_node(page: &mut Self, parent: PageNum) -> &mut LeafNodeHeader<'_> {
         let header = page.page_header_mut();
         header.node_type = NodeType::LeafNode;
-        let node = header.node_mut();
-        if let NodeMut::LeafNode(leaf) = node {
-            leaf.num_cells = 0;
-            leaf.parent_ptr = parent;
-            leaf
-        } else {
-            unreachable!()
-        }
+        let leaf = header.node_mut().leaf().expect("Just initialized as leaf");
+        leaf.num_cells = 0;
+        leaf.parent_ptr = parent;
+        leaf
     }
 
     pub fn initialize_internal_node(
@@ -342,21 +356,35 @@ impl Page {
         key: usize,
         left_child: PageNum,
         right_child: PageNum,
-    ) -> &InternalNodeHeader<'_> {
+    ) -> &mut InternalNodeHeader<'_> {
         let header = page.page_header_mut();
         header.node_type = NodeType::InternalNode;
-        let node = header.node_mut();
-        if let NodeMut::InternalNode(internal) = node {
-            internal.num_keys = 1;
-            internal.parent_ptr = parent;
-            internal.right_child = right_child;
-            let cell = internal.cell_mut(0);
-            cell.key = key;
-            cell.ptr = left_child;
-            internal
-        } else {
-            unreachable!()
-        }
+        let internal = header
+            .node_mut()
+            .internal()
+            .expect("Just initialized as internal");
+        internal.num_keys = 1;
+        internal.parent_ptr = parent;
+        internal.right_child = right_child;
+        let cell = internal.cell_mut_unchecked(0);
+        cell.key = key;
+        cell.ptr = left_child;
+        internal
+    }
+
+    pub fn initialize_empty_internal_node(
+        page: &mut Self,
+        parent: PageNum,
+    ) -> &mut InternalNodeHeader<'_> {
+        let header = page.page_header_mut();
+        header.node_type = NodeType::InternalNode;
+        let internal = header
+            .node_mut()
+            .internal()
+            .expect("Just initialized as internal");
+        internal.parent_ptr = parent;
+        internal.num_keys = 0;
+        internal
     }
 
     pub fn initialize_metadata_page(page: &mut Self, root: PageNum) {
@@ -412,6 +440,8 @@ pub struct MetadataPage {
     pub root: PageNum,
 }
 
+// TODO: Change pager from using a vec to something else
+const MAX_PAGES: usize = 256;
 pub struct Pager {
     file: fs::File,
     num_pages: usize,
@@ -425,7 +455,7 @@ impl Pager {
         let pager = Self {
             file,
             num_pages,
-            pages: vec![].into(),
+            pages: Vec::with_capacity(MAX_PAGES).into(),
         };
         if num_pages == 0 {
             let root_page = PageNum(1);
@@ -443,6 +473,7 @@ impl Pager {
 
     #[allow(clippy::mut_from_ref)]
     pub fn get_page(&self, page_num: PageNum) -> io::Result<&mut Page> {
+        assert!(page_num.0 < MAX_PAGES, "Can't request more than MAX_PAGES");
         let len = self.pages.borrow().len();
         if page_num.0 >= len {
             self.pages
@@ -462,6 +493,11 @@ impl Pager {
                 Ok(page_slot.as_mut().unwrap())
             }
         }
+    }
+
+    pub fn get_node(&self, page_num: PageNum) -> io::Result<NodeMut<'_>> {
+        self.get_page(page_num)
+            .map(|p| p.page_header_mut().node_mut())
     }
 
     pub fn get_free_page(&self) -> io::Result<PageNum> {
