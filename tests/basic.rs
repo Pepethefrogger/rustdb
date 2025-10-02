@@ -1,8 +1,6 @@
 use std::{ops::Range, slice};
 
-use rustdb::debug::debug_table;
-use rustdb::pager::INTERNAL_NODE_CELL_COUNT;
-use rustdb::tree::Table;
+use rustdb::table::{Table, debug::debug_table, internal::INTERNAL_NODE_CELL_COUNT};
 use tempfile::tempfile;
 
 fn insert_range(table: &mut Table, range: Range<usize>) {

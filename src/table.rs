@@ -1,63 +1,19 @@
-use std::{fs, io, marker::PhantomData, slice};
+use std::{fs, io};
 
 use crate::{
-    debug::debug_table,
-    pager::{
-        INTERNAL_NODE_CELL_COUNT, InternalNodeHeader, LeafNodeHeader, NodeMut, Page, PageNum,
-        Pager, leaf_cells_max,
+    pager::{PageNum, Pager},
+    table::{
+        internal::{INTERNAL_NODE_CELL_COUNT, InternalNodeHeader},
+        leaf::{LeafNodeCell, LeafNodeHeader},
+        node::NodeMut,
     },
 };
 
-pub struct InternalNodeCell<'page> {
-    pub key: usize,
-    pub ptr: PageNum,
-    phantom: PhantomData<&'page mut Page>,
-}
+pub mod debug;
 
-impl<'page> InternalNodeCell<'page> {
-    #[inline]
-    pub fn initialize(&mut self, key: usize, ptr: PageNum) {
-        self.key = key;
-        self.ptr = ptr;
-    }
-
-    #[inline]
-    pub fn clone_from(&mut self, other: &Self) {
-        self.initialize(other.key, other.ptr);
-    }
-}
-pub const INTERNAL_NODE_CELL_SIZE: usize = std::mem::size_of::<InternalNodeCell>();
-
-pub const LEAF_NODE_CELL_KEY_SIZE: usize = std::mem::size_of::<LeafNodeCell>();
-pub struct LeafNodeCell<'page> {
-    pub key: usize,
-    phantom: PhantomData<&'page mut Page>,
-}
-
-impl<'page> LeafNodeCell<'page> {
-    #[inline]
-    pub fn initialize(&mut self, key: usize, value: &[u8], size: Size) {
-        self.key = key;
-        self.data_mut(size).copy_from_slice(value);
-    }
-
-    #[inline]
-    pub fn data(&self, size: Size) -> &'page [u8] {
-        let ptr = unsafe { (self as *const Self).add(1) };
-        unsafe { slice::from_raw_parts(ptr as *const u8, size.size) }
-    }
-
-    #[inline]
-    pub fn data_mut(&mut self, size: Size) -> &'page mut [u8] {
-        let ptr = unsafe { (self as *mut Self).add(1) };
-        unsafe { slice::from_raw_parts_mut(ptr as *mut u8, size.size) }
-    }
-
-    #[inline]
-    pub fn clone_from(&mut self, other: &Self, size: Size) {
-        self.initialize(other.key, other.data(size), size);
-    }
-}
+pub mod internal;
+pub mod leaf;
+pub mod node;
 
 pub struct Cursor {
     pub page_num: PageNum,
@@ -119,7 +75,7 @@ pub struct Table {
 impl Table {
     pub fn new(mut pager: Pager, entry_size: usize) -> io::Result<Self> {
         let entry_size = Size::new(entry_size, 8);
-        let max_leaf_cells = leaf_cells_max(entry_size.aligned);
+        let max_leaf_cells = LeafNodeCell::max_cells(entry_size.aligned);
         let root = pager.get_metadata()?.root;
         Ok(Self {
             pager,
@@ -214,7 +170,7 @@ impl Table {
 
         let new_leaf_page_num = self.pager.get_free_page()?;
         let new_leaf_page = self.pager.get_page(new_leaf_page_num)?;
-        let new_leaf = Page::initialize_leaf_node(new_leaf_page, parent);
+        let new_leaf = LeafNodeHeader::initialize(new_leaf_page, parent);
 
         let entry_size = self.entry_size;
         // Copy half of the cells from old leaf, if new cell has to go into new leaf
@@ -255,7 +211,7 @@ impl Table {
             self.split_leaf_and_insert(cursor, key, value, new_internal_page_num, max_leaf_cells)?;
 
         let new_internal_page = self.pager.get_page(new_internal_page_num)?;
-        Page::initialize_internal_node(
+        InternalNodeHeader::initialize(
             new_internal_page,
             PageNum::NULL,
             split_key,
@@ -299,7 +255,7 @@ impl Table {
                     new_root_page_num,
                 )?;
                 let new_root_page = self.pager.get_page(new_root_page_num)?;
-                let _new_root = Page::initialize_internal_node(
+                let _new_root = InternalNodeHeader::initialize(
                     new_root_page,
                     PageNum::NULL,
                     internal_split_key,
@@ -317,9 +273,7 @@ impl Table {
                 //     .internal()
                 //     .unwrap();
                 // println!("Right {:?}:\n{:?}", new_internal_page_num, right_internal);
-                println!("Table after split");
                 self.set_root(new_root_page_num)?;
-                debug_table(self)?;
                 Ok(())
             } else {
                 unimplemented!("Don't know how to recursively insert to internal");
@@ -346,7 +300,7 @@ impl Table {
         // println!("Old internal\n{:?}", internal);
         let new_internal_page_num = self.pager.get_free_page()?;
         let new_internal_page = self.pager.get_page(new_internal_page_num)?;
-        let new_internal = Page::initialize_empty_internal_node(new_internal_page, parent);
+        let new_internal = InternalNodeHeader::initialize_empty(new_internal_page, parent);
 
         let index = internal.find_index(key);
         // Copy half of the cells from old internal

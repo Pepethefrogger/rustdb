@@ -1,8 +1,8 @@
 use std::io;
 
 use crate::{
-    pager::{Node, PageNum},
-    tree::Table,
+    pager::PageNum,
+    table::{Table, node::Node},
 };
 
 fn print_with_indent(str: &str, indentation: usize) {

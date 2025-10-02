@@ -1,3 +1,2 @@
-pub mod debug;
 pub mod pager;
-pub mod tree;
+pub mod table;
