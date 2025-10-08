@@ -1,0 +1,336 @@
+use chumsky::{prelude::*, text::digits};
+
+#[repr(transparent)]
+#[derive(Debug, PartialEq)]
+pub struct Identifier<'a>(&'a str);
+
+impl<'a> From<&'a str> for Identifier<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
+    }
+}
+
+type ParsingError<'a> = extra::Err<Simple<'a, char>>;
+
+#[derive(Debug, PartialEq)]
+pub enum Literal<'a> {
+    Identifier(Identifier<'a>),
+    String(&'a str),
+    Int(usize),
+    Float(f64),
+}
+
+fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+    none_of("\"")
+        .repeated()
+        .to_slice()
+        .delimited_by(just("\""), just("\""))
+        .map(Literal::String)
+}
+
+fn num<'a>() -> impl Parser<'a, &'a str, usize, ParsingError<'a>> {
+    digits(10).to_slice().try_map(|v: &str, span| {
+        let digit: Result<usize, _> = v.parse();
+        digit.map_err(|_e| Simple::new(Some('a'.into()), span))
+    })
+}
+
+fn integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+    num().map(Literal::Int)
+}
+
+fn float<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+    digits(10)
+        .to_slice()
+        .then_ignore(just("."))
+        .then(digits(10).to_slice())
+        .try_map(|(f, s), span| {
+            let mut string = String::from(f);
+            string.push('.');
+            string.push_str(s);
+            let digit: Result<f64, _> = string.parse();
+            digit
+                .map(Literal::Float)
+                .map_err(|_e| Simple::new(Some('a'.into()), span))
+        })
+}
+
+fn value<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+    chumsky::primitive::choice((
+        ident().map(Literal::Identifier),
+        string(),
+        integer(),
+        float(),
+    ))
+}
+
+fn ident<'a>() -> impl Parser<'a, &'a str, Identifier<'a>, ParsingError<'a>> {
+    text::ident().map(Identifier)
+}
+
+fn parentheses<'a, T>(
+    parser: impl Parser<'a, &'a str, T, ParsingError<'a>>,
+) -> impl Parser<'a, &'a str, Vec<T>, ParsingError<'a>> {
+    parser
+        .separated_by(just(",").padded())
+        .collect::<Vec<_>>()
+        .delimited_by(just("("), just(")"))
+}
+
+fn binary_operation<'a, T, S>(
+    left: impl Parser<'a, &'a str, T, ParsingError<'a>>,
+    right: impl Parser<'a, &'a str, S, ParsingError<'a>>,
+    sym: &'a str,
+) -> impl Parser<'a, &'a str, (T, S), ParsingError<'a>> {
+    left.then_ignore(just(sym).padded()).then(right)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Operation<'a> {
+    Select {
+        table: Identifier<'a>,
+        columns: Vec<Identifier<'a>>,
+    },
+    Insert {
+        table: Identifier<'a>,
+        values: Vec<(Identifier<'a>, Literal<'a>)>,
+    },
+    Update {
+        table: Identifier<'a>,
+        values: Vec<(Identifier<'a>, Literal<'a>)>,
+    },
+    Delete {
+        table: Identifier<'a>,
+    },
+}
+
+/// SELECT a, b, c FROM table
+fn select<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+    let columns = ident()
+        .separated_by(just(",").padded())
+        .at_least(1)
+        .collect::<Vec<_>>();
+
+    just("SELECT")
+        .padded()
+        .ignore_then(columns)
+        .then_ignore(just("FROM").padded())
+        .then(ident())
+        .map(|(columns, table)| Operation::Select { columns, table })
+}
+
+/// INSERT INTO table (col1, col2) VALUES (1, 2)
+fn insert<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+    just("INSERT")
+        .padded()
+        .then(just("INTO").padded())
+        .ignore_then(ident())
+        .then(parentheses(ident()).padded())
+        .then_ignore(just("VALUES").padded())
+        .then(parentheses(value()).padded())
+        .try_map(|((table, columns), parentheses), span| {
+            if columns.len() != parentheses.len() {
+                Err(Simple::new(Some('a'.into()), span))
+            } else {
+                let values = columns.into_iter().zip(parentheses).collect();
+                Ok(Operation::Insert { table, values })
+            }
+        })
+}
+
+/// UPDATE table SET col1 = 1
+fn update<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+    let values = binary_operation(ident(), value(), "=")
+        .padded()
+        .separated_by(just(","))
+        .collect::<Vec<_>>();
+    just("UPDATE")
+        .padded()
+        .ignore_then(ident())
+        .then_ignore(just("SET").padded())
+        .then(values)
+        .map(|(table, values)| Operation::Update { table, values })
+}
+
+/// DELETE FROM table
+fn delete<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+    just("DELETE")
+        .padded()
+        .ignore_then(just("FROM").padded())
+        .ignore_then(ident())
+        .map(|table| Operation::Delete { table })
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Statement<'a> {
+    operation: Operation<'a>,
+    // TODO: implement where
+    limit: Option<usize>,
+    skip: Option<usize>,
+}
+
+impl<'a> Statement<'a> {
+    fn new(operation: Operation<'a>) -> Self {
+        Self {
+            operation,
+            limit: None,
+            skip: None,
+        }
+    }
+}
+
+enum Clause {
+    Limit(usize),
+    Skip(usize),
+}
+
+fn parse_limit<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
+    just("LIMIT")
+        .padded()
+        .ignore_then(num().padded())
+        .map(Clause::Limit)
+}
+
+fn parse_skip<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
+    just("SKIP")
+        .padded()
+        .ignore_then(num().padded())
+        .map(Clause::Skip)
+}
+
+fn parse_clause<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
+    chumsky::primitive::choice((parse_limit(), parse_skip()))
+}
+
+pub fn parser<'a>() -> impl Parser<'a, &'a str, Statement<'a>, ParsingError<'a>> {
+    let operation_parser = chumsky::primitive::choice((select(), insert(), update(), delete()));
+    operation_parser.map(Statement::new).foldl(
+        parse_clause().repeated(),
+        |mut statement, clause| {
+            match clause {
+                Clause::Skip(s) => statement.skip = Some(s),
+                Clause::Limit(l) => statement.limit = Some(l),
+            }
+            statement
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! assert_parse {
+        ($parser: expr, $str: expr, $res: expr) => {{
+            let result = ($parser).parse($str).unwrap();
+            assert_eq!(result, $res)
+        }};
+    }
+
+    macro_rules! assert_parse_operation {
+        ($parser: expr, $str: expr, $res: expr) => {{ assert_parse!($parser, $str, Statement::new($res)) }};
+    }
+
+    #[test]
+    fn test_parse_parentheses() {
+        let str = "(a, b, c)";
+        assert_parse!(
+            parentheses(ident()),
+            str,
+            vec!["a".into(), "b".into(), "c".into()]
+        )
+    }
+
+    #[test]
+    fn test_parse_int() {
+        let str = "5";
+        assert_parse!(integer(), str, Literal::Int(5))
+    }
+
+    #[test]
+    fn test_parse_float() {
+        let str = "4.5";
+        assert_parse!(float(), str, Literal::Float(4.5))
+    }
+
+    #[test]
+    fn test_parse_string() {
+        let str = "\"string\"";
+        assert_parse!(string(), str, Literal::String("string"))
+    }
+
+    #[test]
+    fn test_parse_select() {
+        let str = "SELECT col1, col2 FROM table";
+        assert_parse_operation!(
+            parser(),
+            str,
+            Operation::Select {
+                table: "table".into(),
+                columns: vec!["col1".into(), "col2".into()],
+            }
+        )
+    }
+
+    #[test]
+    fn test_parse_insert() {
+        let str = "INSERT INTO table (col1, col2) VALUES (3, 5)";
+        assert_parse_operation!(
+            parser(),
+            str,
+            Operation::Insert {
+                table: "table".into(),
+                values: vec![
+                    ("col1".into(), Literal::Int(3)),
+                    ("col2".into(), Literal::Int(5))
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_update() {
+        let str = "UPDATE table SET col1 = 0, col2 = 3";
+        assert_parse_operation!(
+            parser(),
+            str,
+            Operation::Update {
+                table: "table".into(),
+                values: vec![
+                    ("col1".into(), Literal::Int(0)),
+                    ("col2".into(), Literal::Int(3))
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_delete() {
+        let str = "DELETE FROM table";
+        assert_parse_operation!(
+            parser(),
+            str,
+            Operation::Delete {
+                table: "table".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_clauses() {
+        let str = "SELECT id FROM table LIMIT 10 SKIP 5";
+        let operation = Operation::Select {
+            table: "table".into(),
+            columns: vec!["id".into()],
+        };
+        assert_parse!(
+            parser(),
+            str,
+            Statement {
+                operation,
+                skip: Some(5),
+                limit: Some(10)
+            }
+        )
+    }
+}
