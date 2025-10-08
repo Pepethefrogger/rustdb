@@ -1,9 +1,10 @@
 use std::ops::Range;
 
-use rustdb::table::{
-    Table, debug::debug_table, internal::INTERNAL_NODE_CELL_COUNT, metadata::Type,
+use rustdb::{
+    db::DB,
+    table::{Table, debug::debug_table, internal::INTERNAL_NODE_CELL_COUNT, metadata::Type},
 };
-use tempfile::tempfile;
+use tempfile::{tempdir, tempfile};
 
 fn insert_range(table: &mut Table, range: Range<usize>) {
     range.clone().for_each(|e| {
@@ -122,4 +123,38 @@ fn test_split_internal_node() {
     insert_range(&mut table, entries.clone());
     debug_table(&table).unwrap();
     check_range(&mut table, entries);
+}
+
+#[test]
+fn test_database() {
+    let dir = tempdir().unwrap();
+    let mut db = DB::new(dir.path());
+    let table_name = "test";
+    db.create_table(table_name, &[("name", Type::Int)]).unwrap();
+    let table = db.table(table_name).unwrap();
+
+    let entry = &10usize.to_ne_bytes();
+    table.insert(0, entry).unwrap();
+    let value = table.find(0).unwrap();
+    assert_eq!(entry, value);
+    drop(dir);
+}
+
+#[test]
+fn test_database_persistence() {
+    let dir = tempdir().unwrap();
+    let mut db = DB::new(dir.path());
+    let table_name = "test";
+    db.create_table(table_name, &[("name", Type::Int)]).unwrap();
+    let table = db.table(table_name).unwrap();
+
+    let entry = &10usize.to_ne_bytes();
+    table.insert(0, entry).unwrap();
+    drop(db);
+
+    let mut db = DB::new(dir.path());
+    let table = db.table(table_name).unwrap();
+    let value = table.find(0).unwrap();
+    assert_eq!(entry, value);
+    drop(dir);
 }
