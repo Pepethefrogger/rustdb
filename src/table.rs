@@ -1,10 +1,14 @@
-use std::{fs, io};
+use std::{
+    fs,
+    io::{self},
+};
 
 use crate::{
     pager::{PageNum, Pager},
     table::{
         internal::{INTERNAL_NODE_CELL_COUNT, InternalNodeHeader},
         leaf::{LeafNodeCell, LeafNodeHeader},
+        metadata::{Metadata, MetadataHandler, Size, Type},
         node::NodeMut,
     },
 };
@@ -13,6 +17,7 @@ pub mod debug;
 
 pub mod internal;
 pub mod leaf;
+pub mod metadata;
 pub mod node;
 
 pub struct Cursor {
@@ -52,53 +57,50 @@ impl Cursor {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Size {
-    pub size: usize,
-    pub aligned: usize,
-}
-
-impl Size {
-    const fn new(size: usize, align: usize) -> Size {
-        let aligned = (size + align - 1) & !(align - 1);
-        Self { size, aligned }
-    }
-}
-
 pub struct Table {
     pub pager: Pager,
-    root: PageNum,
+    metadata: MetadataHandler,
     pub entry_size: Size,
     pub max_leaf_cells: usize,
 }
 
 impl Table {
-    pub fn new(mut pager: Pager, entry_size: usize) -> io::Result<Self> {
-        let entry_size = Size::new(entry_size, 8);
+    fn from_parts(pager: Pager, metadata_handler: MetadataHandler) -> io::Result<Self> {
+        let entry_size = metadata_handler.entry_size();
+        println!("Entry size: {:?}", entry_size);
         let max_leaf_cells = LeafNodeCell::max_cells(entry_size.aligned);
-        let root = pager.get_metadata()?.root;
         Ok(Self {
             pager,
-            root,
+            metadata: metadata_handler,
             entry_size,
             max_leaf_cells,
         })
     }
 
+    pub fn create(
+        data_file: fs::File,
+        metadata_file: fs::File,
+        fields: &[(&str, Type)],
+    ) -> io::Result<Self> {
+        let pager = Pager::new(data_file)?;
+        let metadata = Metadata::new(PageNum(1), fields);
+        let metadata_handler = MetadataHandler::new(metadata_file, metadata);
+        Self::from_parts(pager, metadata_handler)
+    }
+
+    pub fn open(data_file: fs::File, metadata_file: fs::File) -> io::Result<Self> {
+        let pager = Pager::new(data_file)?;
+        let metadata_handler = MetadataHandler::open(metadata_file)?;
+        Self::from_parts(pager, metadata_handler)
+    }
+
     #[inline]
     pub fn get_root(&self) -> PageNum {
-        self.root
+        self.metadata.metadata.root
     }
 
-    pub fn set_root(&mut self, page: PageNum) -> io::Result<()> {
-        self.pager.get_metadata()?.root = page;
-        self.root = page;
-        Ok(())
-    }
-
-    pub fn from_file(file: fs::File, entry_size: usize) -> io::Result<Self> {
-        let pager = Pager::new(file)?;
-        Table::new(pager, entry_size)
+    pub fn set_root(&mut self, page: PageNum) {
+        self.metadata.metadata.root = page;
     }
 
     fn cursor(&self, page_num: PageNum, cell_num: usize) -> Cursor {
@@ -119,7 +121,7 @@ impl Table {
     /// Returns a cursor pointing to the specified value.
     /// Can be used for inserting, so it doesn't always point to a cell with cell.key == key
     fn find_cursor(&self, key: usize) -> io::Result<Cursor> {
-        let mut page_num = self.root;
+        let mut page_num = self.get_root();
         let mut node = self.pager.get_node(page_num)?;
         while let NodeMut::InternalNode(ref mut internal) = node {
             page_num = internal.find(key);
@@ -203,7 +205,7 @@ impl Table {
         value: &[u8],
     ) -> io::Result<()> {
         let new_internal_page_num = self.pager.get_free_page()?;
-        self.set_root(new_internal_page_num)?;
+        self.set_root(new_internal_page_num);
 
         let max_leaf_cells = self.max_leaf_cells;
         // Split children into two new leaf nodes
@@ -273,7 +275,7 @@ impl Table {
                 //     .internal()
                 //     .unwrap();
                 // println!("Right {:?}:\n{:?}", new_internal_page_num, right_internal);
-                self.set_root(new_root_page_num)?;
+                self.set_root(new_root_page_num);
                 Ok(())
             } else {
                 unimplemented!("Don't know how to recursively insert to internal");
@@ -353,5 +355,6 @@ impl Table {
 impl Drop for Table {
     fn drop(&mut self) {
         self.pager.flush().expect("Failed to flush pager");
+        self.metadata.flush().expect("Failed to flush metadata");
     }
 }

@@ -1,6 +1,8 @@
-use std::{ops::Range, slice};
+use std::ops::Range;
 
-use rustdb::table::{Table, debug::debug_table, internal::INTERNAL_NODE_CELL_COUNT};
+use rustdb::table::{
+    Table, debug::debug_table, internal::INTERNAL_NODE_CELL_COUNT, metadata::Type,
+};
 use tempfile::tempfile;
 
 fn insert_range(table: &mut Table, range: Range<usize>) {
@@ -21,38 +23,43 @@ fn check_range(table: &mut Table, range: Range<usize>) {
 
 #[test]
 fn test_persistence() {
-    let entry = [1, 2, 3, 4];
-    let entry_size = std::mem::size_of_val(&entry);
+    let entry = 10usize.to_ne_bytes();
 
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file.try_clone().unwrap(), entry_size).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(
+        data_file.try_clone().unwrap(),
+        metadata_file.try_clone().unwrap(),
+        &[("num", Type::Int)],
+    )
+    .unwrap();
     table.insert(0, &entry).unwrap();
 
     drop(table);
 
-    let table = Table::from_file(file, entry_size).unwrap();
+    let table = Table::open(data_file, metadata_file).unwrap();
     let data = table.find(0).unwrap();
     assert_eq!(data, entry);
 }
 
 #[test]
 fn test_duplicate_key() {
-    let entry = 8;
-    let entry_size = std::mem::size_of_val(&entry);
+    let entry = 20usize.to_ne_bytes();
 
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file.try_clone().unwrap(), entry_size).unwrap();
-    table.insert(0, slice::from_ref(&entry)).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    table.insert(0, &entry).unwrap();
     table
-        .insert(0, slice::from_ref(&entry))
+        .insert(0, &entry)
         .expect_err("Should return duplicate key");
 }
 
 #[test]
 fn test_fill_leaf() {
-    let entry_size = std::mem::size_of::<usize>();
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file, entry_size).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
 
     let max_entries_per_leaf = table.max_leaf_cells;
     println!("max entries per leaf {}", max_entries_per_leaf);
@@ -64,9 +71,9 @@ fn test_fill_leaf() {
 
 #[test]
 fn test_split_leaf_node() {
-    let entry_size = std::mem::size_of::<usize>();
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file, entry_size).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
 
     let max_entries_per_leaf = table.max_leaf_cells;
     println!("max entries per leaf {}", max_entries_per_leaf);
@@ -78,9 +85,9 @@ fn test_split_leaf_node() {
 
 #[test]
 fn test_fill_internal_node() {
-    let entry_size: usize = std::mem::size_of::<usize>();
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file, entry_size).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
 
     let max_entries_per_leaf: usize = table.max_leaf_cells;
     let half_entries = INTERNAL_NODE_CELL_COUNT;
@@ -98,9 +105,9 @@ fn test_fill_internal_node() {
 
 #[test]
 fn test_split_internal_node() {
-    let entry_size: usize = std::mem::size_of::<usize>();
-    let file = tempfile().unwrap();
-    let mut table = Table::from_file(file, entry_size).unwrap();
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
 
     let max_entries_per_leaf: usize = table.max_leaf_cells;
     let half_entries = INTERNAL_NODE_CELL_COUNT - 1;

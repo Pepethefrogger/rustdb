@@ -49,9 +49,10 @@ impl Page {
         }
     }
 
-    pub fn initialize_metadata_page(page: &mut Self, root: PageNum) {
-        let metadata = page.metadata();
-        metadata.root = root;
+    pub fn initialize_metadata_page(_page: &mut Self, _root: PageNum) {
+        // NOOP
+        // let metadata = page.metadata();
+        // metadata.root = root;
     }
 }
 
@@ -98,9 +99,8 @@ impl<'page> PageHeader<'page> {
     }
 }
 
-pub struct MetadataPage {
-    pub root: PageNum,
-}
+// TODO: Use this page for collecting free pages and something else
+pub struct MetadataPage {}
 
 // TODO: Change pager from using a vec to something else
 const MAX_PAGES: usize = 256;

@@ -1,0 +1,171 @@
+use std::{
+    fs,
+    io::{self, Read, Seek, Write},
+    ops::Add,
+};
+
+use crate::pager::PageNum;
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Size {
+    pub size: usize,
+    pub aligned: usize,
+}
+
+impl Add for Size {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            size: self.aligned + rhs.size,
+            aligned: self.aligned + rhs.aligned,
+        }
+    }
+}
+
+impl Size {
+    const ALIGN: usize = 8;
+    const fn new(size: usize) -> Size {
+        let aligned = (size + Self::ALIGN - 1) & !(Self::ALIGN - 1);
+        Self { size, aligned }
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub enum Type {
+    String(usize),
+    #[default]
+    Int,
+    Uint,
+    Float,
+}
+
+impl Type {
+    fn size(&self) -> Size {
+        match self {
+            Type::String(length) => Size::new(*length),
+            Type::Int => Size::new(std::mem::size_of::<i64>()),
+            Type::Uint => Size::new(std::mem::size_of::<u64>()),
+            Type::Float => Size::new(std::mem::size_of::<f64>()),
+        }
+    }
+}
+
+const MAX_NAME_LENGTH: usize = 32;
+#[derive(Clone, Copy)]
+pub struct Field {
+    name_len: u8,
+    name: [u8; MAX_NAME_LENGTH],
+    typ: Type,
+}
+
+impl Default for Field {
+    fn default() -> Self {
+        Self {
+            name_len: 0,
+            name: [0; MAX_NAME_LENGTH],
+            typ: Type::default(),
+        }
+    }
+}
+
+impl Field {
+    fn name(&self) -> &str {
+        let bytes = &self.name[..self.name_len as usize];
+        unsafe { str::from_utf8_unchecked(bytes) }
+    }
+
+    fn write_name(&mut self, name: &str) {
+        let len = name.len();
+        self.name[..len].copy_from_slice(name.as_bytes());
+        self.name_len = len as u8;
+    }
+
+    fn size(&self) -> Size {
+        println!("Type: {:?}, size: {:?}", self.typ, self.typ.size());
+        self.typ.size()
+    }
+}
+
+const MAX_FIELDS: usize = 64;
+pub struct Metadata {
+    pub root: PageNum,
+    pub num_fields: usize,
+    pub fields: [Field; MAX_FIELDS],
+}
+
+impl Metadata {
+    pub fn new(root: PageNum, fields: &[(&str, Type)]) -> Self {
+        let mut metadata = Self {
+            root,
+            num_fields: fields.len(),
+            fields: [Field::default(); MAX_FIELDS],
+        };
+        fields
+            .iter()
+            .copied()
+            .zip(metadata.fields.iter_mut())
+            .for_each(|((name, typ), f)| {
+                f.write_name(name);
+                f.typ = typ;
+            });
+        metadata
+    }
+    pub fn field(&self, i: usize) -> (&str, Type) {
+        let field = &self.fields[i];
+        let name = field.name();
+        (name, field.typ)
+    }
+}
+
+pub struct MetadataHandler {
+    file: fs::File,
+    pub metadata: Metadata,
+}
+
+impl MetadataHandler {
+    const LENGTH: usize = std::mem::size_of::<Metadata>();
+    pub fn new(file: fs::File, metadata: Metadata) -> Self {
+        Self { file, metadata }
+    }
+
+    pub fn open(mut file: fs::File) -> io::Result<Self> {
+        let mut buf = [0; Self::LENGTH];
+        file.rewind()?;
+        file.read_exact(&mut buf)?;
+        let metadata = unsafe { std::mem::transmute::<[u8; Self::LENGTH], Metadata>(buf) };
+        Ok(Self { file, metadata })
+    }
+
+    pub fn entry_size(&self) -> Size {
+        let metadata = &self.metadata;
+        metadata
+            .fields
+            .iter()
+            .take(metadata.num_fields)
+            .fold(Size::default(), |acc, field| acc + field.size())
+    }
+
+    pub fn flush(&mut self) -> io::Result<()> {
+        let data = unsafe { std::mem::transmute::<&Metadata, &[u8; Self::LENGTH]>(&self.metadata) };
+        self.file.set_len(data.len() as u64)?;
+        self.file.rewind()?;
+        println!("Writing buffer: \n{:?}", data);
+        self.file.write_all(data)?;
+        self.file.sync_data()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_field() {
+        let mut field = Field::default();
+        field.write_name("test");
+        field.typ = Type::String(10);
+
+        assert_eq!(field.name(), "test");
+        assert_eq!(field.typ, Type::String(10));
+    }
+}
