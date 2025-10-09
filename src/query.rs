@@ -2,6 +2,8 @@ use std::ops::Deref;
 
 use chumsky::{prelude::*, text::digits};
 
+use crate::table::metadata::Type;
+
 #[repr(transparent)]
 #[derive(Debug, PartialEq)]
 pub struct Identifier(str);
@@ -40,6 +42,18 @@ pub enum Literal<'a> {
     String(&'a str),
     Int(usize),
     Float(f64),
+}
+
+impl<'a> Literal<'a> {
+    pub fn write_to(&self, buf: &mut [u8]) {
+        let data = match self {
+            Self::Identifier(_) => unimplemented!(),
+            Self::String(str) => str.as_bytes(),
+            Self::Int(i) => &i.to_ne_bytes(),
+            Self::Float(f) => &f.to_ne_bytes(),
+        };
+        buf.copy_from_slice(data);
+    }
 }
 
 fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
