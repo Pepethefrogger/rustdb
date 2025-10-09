@@ -158,6 +158,7 @@ impl<'page> LeafNodeHeader<'page> {
         self.find_index(key, entry_size)
     }
 
+    /// Makes a space in index and inserts the new cell
     pub fn insert_at_index(&mut self, index: usize, key: usize, value: &[u8], entry_size: Size) {
         if index < self.num_cells {
             // make space for new cell, shift elements to the right: next = prev
@@ -170,9 +171,11 @@ impl<'page> LeafNodeHeader<'page> {
         self.num_cells += 1;
     }
 
-    pub fn insert(&mut self, key: usize, value: &[u8], entry_size: Size) {
+    /// Inserts the cell into the leaf node and returns the cell num it was inserted at
+    pub fn insert(&mut self, key: usize, value: &[u8], entry_size: Size) -> usize {
         let index = self.find_index(key, entry_size);
         self.insert_at_index(index, key, value, entry_size);
+        index
     }
 
     pub const fn split_count(max_leaf_cells: usize) -> usize {

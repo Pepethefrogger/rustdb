@@ -135,10 +135,11 @@ impl Table {
         Ok(self.cursor(page_num, cell_num))
     }
 
+    // TODO: Add a method for making entries without values
     pub fn insert(&mut self, key: usize, value: &[u8]) -> io::Result<()> {
         let entry_size = self.entry_size;
         let max_leaf_cells = self.max_leaf_cells;
-        let cursor = self.find_cursor(key)?;
+        let mut cursor = self.find_cursor(key)?;
         let leaf = cursor.leaf(self)?;
         if cursor.cell_num < leaf.num_cells
             && leaf.cell_unchecked(cursor.cell_num, entry_size).key == key
@@ -148,9 +149,9 @@ impl Table {
 
         if leaf.num_cells == max_leaf_cells {
             if leaf.is_root() {
-                self.split_root_leaf_and_insert(&cursor, key, value)?;
+                self.split_root_leaf_and_insert(&mut cursor, key, value)?;
             } else {
-                self.split_nonroot_leaf_and_insert(&cursor, key, value)?;
+                self.split_nonroot_leaf_and_insert(&mut cursor, key, value)?;
             }
         } else {
             leaf.insert_at_index(cursor.cell_num, key, value, entry_size);
@@ -159,11 +160,11 @@ impl Table {
     }
 
     /// Creates a new leaf node, copies cells from self to other until self has split_count cells
-    /// Also it creates a new entry in the correct leaf
+    /// Also it creates a new entry in the correct leaf and mutates the cursor to point at it
     /// Returns the newly created page, as well as the first key in the right node
     fn split_leaf_and_insert(
         &self,
-        cursor: &Cursor,
+        cursor: &mut Cursor,
         // leaf: &mut LeafNodeHeader,
         key: usize,
         value: &[u8],
@@ -192,9 +193,12 @@ impl Table {
         new_leaf.parent_ptr = parent;
         new_leaf.num_cells = max_leaf_cells - split_count;
         if cursor.cell_num < split_count {
+            // No need to change the cursor, it's already correct
             leaf.insert_at_index(cursor.cell_num, key, value, entry_size);
         } else {
-            new_leaf.insert(key, value, entry_size);
+            let cell_num = new_leaf.insert(key, value, entry_size);
+            cursor.page_num = new_leaf_page_num;
+            cursor.cell_num = cell_num;
         }
         let split_key = new_leaf.cell_unchecked(0, entry_size).key;
         Ok((new_leaf_page_num, split_key))
@@ -202,10 +206,11 @@ impl Table {
 
     fn split_root_leaf_and_insert(
         &mut self,
-        cursor: &Cursor,
+        cursor: &mut Cursor,
         key: usize,
         value: &[u8],
     ) -> io::Result<()> {
+        let old_leaf_page_num = cursor.page_num;
         let new_internal_page_num = self.pager.get_free_page()?;
         self.set_root(new_internal_page_num);
 
@@ -219,7 +224,7 @@ impl Table {
             new_internal_page,
             PageNum::NULL,
             split_key,
-            cursor.page_num,
+            old_leaf_page_num,
             new_leaf_page_num,
         );
         // println!("Internal {:?}: \n{:?}", new_internal_page_num, new_internal);
@@ -230,7 +235,7 @@ impl Table {
 
     fn split_nonroot_leaf_and_insert(
         &mut self,
-        cursor: &Cursor,
+        cursor: &mut Cursor,
         key: usize,
         value: &[u8],
     ) -> io::Result<()> {
