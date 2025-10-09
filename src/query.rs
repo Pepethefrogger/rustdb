@@ -1,12 +1,34 @@
+use std::ops::Deref;
+
 use chumsky::{prelude::*, text::digits};
 
 #[repr(transparent)]
 #[derive(Debug, PartialEq)]
-pub struct Identifier<'a>(&'a str);
+pub struct Identifier(str);
 
-impl<'a> From<&'a str> for Identifier<'a> {
+impl Identifier {
+    fn new(str: &str) -> &Self {
+        str.into()
+    }
+}
+
+impl<'a> From<&'a str> for &'a Identifier {
     fn from(value: &'a str) -> Self {
-        Self(value)
+        let ptr = value as *const str as *const Identifier;
+        unsafe { &*ptr }
+    }
+}
+
+impl Deref for Identifier {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> From<&'a Identifier> for &'a str {
+    fn from(value: &'a Identifier) -> Self {
+        &value.0
     }
 }
 
@@ -14,7 +36,7 @@ type ParsingError<'a> = extra::Err<Simple<'a, char>>;
 
 #[derive(Debug, PartialEq)]
 pub enum Literal<'a> {
-    Identifier(Identifier<'a>),
+    Identifier(&'a Identifier),
     String(&'a str),
     Int(usize),
     Float(f64),
@@ -64,8 +86,8 @@ fn value<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
     ))
 }
 
-fn ident<'a>() -> impl Parser<'a, &'a str, Identifier<'a>, ParsingError<'a>> {
-    text::ident().map(Identifier)
+fn ident<'a>() -> impl Parser<'a, &'a str, &'a Identifier, ParsingError<'a>> {
+    text::ident().map(Identifier::new)
 }
 
 fn parentheses<'a, T>(
@@ -88,20 +110,31 @@ fn binary_operation<'a, T, S>(
 #[derive(Debug, PartialEq)]
 pub enum Operation<'a> {
     Select {
-        table: Identifier<'a>,
-        columns: Vec<Identifier<'a>>,
+        table: &'a Identifier,
+        columns: Vec<&'a Identifier>,
     },
     Insert {
-        table: Identifier<'a>,
-        values: Vec<(Identifier<'a>, Literal<'a>)>,
+        table: &'a Identifier,
+        values: Vec<(&'a Identifier, Literal<'a>)>,
     },
     Update {
-        table: Identifier<'a>,
-        values: Vec<(Identifier<'a>, Literal<'a>)>,
+        table: &'a Identifier,
+        values: Vec<(&'a Identifier, Literal<'a>)>,
     },
     Delete {
-        table: Identifier<'a>,
+        table: &'a Identifier,
     },
+}
+
+impl<'a> Operation<'a> {
+    pub fn table(&self) -> &Identifier {
+        match self {
+            Self::Select { table, .. } => table,
+            Self::Insert { table, .. } => table,
+            Self::Update { table, .. } => table,
+            Self::Delete { table } => table,
+        }
+    }
 }
 
 /// SELECT a, b, c FROM table
@@ -163,10 +196,10 @@ fn delete<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
 
 #[derive(Debug, PartialEq)]
 pub struct Statement<'a> {
-    operation: Operation<'a>,
+    pub operation: Operation<'a>,
     // TODO: implement where
-    limit: Option<usize>,
-    skip: Option<usize>,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>,
 }
 
 impl<'a> Statement<'a> {
@@ -237,7 +270,7 @@ mod tests {
         assert_parse!(
             parentheses(ident()),
             str,
-            vec!["a".into(), "b".into(), "c".into()]
+            ["a", "b", "c"].map(Identifier::new)
         )
     }
 
