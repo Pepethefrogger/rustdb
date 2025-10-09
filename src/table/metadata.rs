@@ -30,6 +30,12 @@ impl Size {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct Layout {
+    pub offset: usize,
+    pub size: Size,
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum Type {
     String(usize),
@@ -53,6 +59,7 @@ impl Type {
 const MAX_NAME_LENGTH: usize = 32;
 #[derive(Clone, Copy)]
 pub struct Field {
+    layout: Layout,
     name_len: u8,
     name: [u8; MAX_NAME_LENGTH],
     typ: Type,
@@ -61,6 +68,7 @@ pub struct Field {
 impl Default for Field {
     fn default() -> Self {
         Self {
+            layout: Layout::default(),
             name_len: 0,
             name: [0; MAX_NAME_LENGTH],
             typ: Type::default(),
@@ -79,11 +87,6 @@ impl Field {
         self.name[..len].copy_from_slice(name.as_bytes());
         self.name_len = len as u8;
     }
-
-    fn size(&self) -> Size {
-        println!("Type: {:?}, size: {:?}", self.typ, self.typ.size());
-        self.typ.size()
-    }
 }
 
 const MAX_FIELDS: usize = 64;
@@ -100,6 +103,7 @@ impl Metadata {
             num_fields: fields.len(),
             fields: [Field::default(); MAX_FIELDS],
         };
+        let mut offset = 0;
         fields
             .iter()
             .copied()
@@ -107,6 +111,9 @@ impl Metadata {
             .for_each(|((name, typ), f)| {
                 f.write_name(name);
                 f.typ = typ;
+                let size = typ.size();
+                f.layout = Layout { offset, size };
+                offset += size.aligned;
             });
         metadata
     }
@@ -142,7 +149,14 @@ impl MetadataHandler {
             .fields
             .iter()
             .take(metadata.num_fields)
-            .fold(Size::default(), |acc, field| acc + field.size())
+            .fold(Size::default(), |acc, field| acc + field.layout.size)
+    }
+
+    pub fn field(&self, name: &str) -> Option<&Field> {
+        self.metadata
+            .fields
+            .iter()
+            .find(|&field| field.name() == name)
     }
 
     pub fn flush(&mut self) -> io::Result<()> {

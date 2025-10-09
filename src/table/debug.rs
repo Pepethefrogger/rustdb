@@ -41,7 +41,7 @@ fn debug_node(table: &Table, page_num: PageNum, indentation: usize) -> io::Resul
                 let cell = leaf.cell_unchecked(i, table.entry_size);
                 let key = cell.key;
                 let data = cell.data(table.entry_size);
-                let value = usize::from_ne_bytes(data.try_into().unwrap());
+                let value = usize::from_ne_bytes(data.read_all().try_into().unwrap());
                 print_with_indent(&format!("Key: {}, Value: {}", key, value), indentation + 1);
             }
         }

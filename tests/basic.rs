@@ -16,7 +16,7 @@ fn insert_range(table: &mut Table, range: Range<usize>) {
 fn check_range(table: &mut Table, range: Range<usize>) {
     range.for_each(|e| {
         let bytes = table.find(e).unwrap();
-        let data = usize::from_ne_bytes(bytes.try_into().expect("Data didn't fit"));
+        let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
         // println!("Retrieved {} from index {}, should be {}", data, e, e);
         assert_eq!(data, e);
     });
@@ -40,7 +40,7 @@ fn test_persistence() {
 
     let table = Table::open(data_file, metadata_file).unwrap();
     let data = table.find(0).unwrap();
-    assert_eq!(data, entry);
+    assert_eq!(data.read_all(), entry);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_database() {
     let entry = &10usize.to_ne_bytes();
     table.insert(0, entry).unwrap();
     let value = table.find(0).unwrap();
-    assert_eq!(entry, value);
+    assert_eq!(value.read_all(), entry);
     drop(dir);
 }
 
@@ -155,6 +155,6 @@ fn test_database_persistence() {
     let mut db = DB::new(dir.path());
     let table = db.table(table_name).unwrap();
     let value = table.find(0).unwrap();
-    assert_eq!(entry, value);
+    assert_eq!(value.read_all(), entry);
     drop(dir);
 }

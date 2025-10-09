@@ -3,7 +3,7 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use crate::{
     pager::{PAGE_HEADER_SIZE, PAGE_SIZE, Page, PageNum},
-    table::{Size, node::NodeType},
+    table::{Size, data::Data, node::NodeType},
 };
 
 pub const LEAF_NODE_CELL_KEY_SIZE: usize = std::mem::size_of::<LeafNodeCell>();
@@ -23,24 +23,26 @@ impl<'page> LeafNodeCell<'page> {
     #[inline]
     pub fn initialize(&mut self, key: usize, value: &[u8], size: Size) {
         self.key = key;
-        self.data_mut(size).copy_from_slice(value);
+        self.data_mut(size).write_all(value);
     }
 
     #[inline]
-    pub fn data(&self, size: Size) -> &'page [u8] {
+    pub fn data(&self, size: Size) -> &'page Data {
         let ptr = unsafe { (self as *const Self).add(1) };
-        unsafe { slice::from_raw_parts(ptr as *const u8, size.size) }
+        let slice = unsafe { slice::from_raw_parts(ptr as *const u8, size.size) };
+        Data::new_ref(slice)
     }
 
     #[inline]
-    pub fn data_mut(&mut self, size: Size) -> &'page mut [u8] {
+    pub fn data_mut(&mut self, size: Size) -> &'page mut Data {
         let ptr = unsafe { (self as *mut Self).add(1) };
-        unsafe { slice::from_raw_parts_mut(ptr as *mut u8, size.size) }
+        let slice = unsafe { slice::from_raw_parts_mut(ptr as *mut u8, size.size) };
+        Data::new_mut(slice)
     }
 
     #[inline]
     pub fn clone_from(&mut self, other: &Self, size: Size) {
-        self.initialize(other.key, other.data(size), size);
+        self.initialize(other.key, other.data(size).read_all(), size);
     }
 }
 
@@ -177,4 +179,3 @@ impl<'page> LeafNodeHeader<'page> {
         max_leaf_cells.div_ceil(2)
     }
 }
-

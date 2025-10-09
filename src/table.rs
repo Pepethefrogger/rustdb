@@ -6,6 +6,7 @@ use std::{
 use crate::{
     pager::{PageNum, Pager},
     table::{
+        data::Data,
         internal::{INTERNAL_NODE_CELL_COUNT, InternalNodeHeader},
         leaf::{LeafNodeCell, LeafNodeHeader},
         metadata::{Metadata, MetadataHandler, Size, Type},
@@ -15,6 +16,7 @@ use crate::{
 
 pub mod debug;
 
+pub mod data;
 pub mod internal;
 pub mod leaf;
 pub mod metadata;
@@ -27,7 +29,7 @@ pub struct Cursor {
 
 impl Cursor {
     /// Returns the value that this cursor points to
-    pub fn value<'table>(&self, table: &'table Table) -> io::Result<&'table mut [u8]> {
+    pub fn value<'table>(&self, table: &'table Table) -> io::Result<&'table mut Data> {
         let cell = self.cell(table)?;
         Ok(cell.data_mut(table.entry_size))
     }
@@ -59,7 +61,7 @@ impl Cursor {
 
 pub struct Table {
     pub pager: Pager,
-    metadata: MetadataHandler,
+    pub metadata: MetadataHandler,
     pub entry_size: Size,
     pub max_leaf_cells: usize,
 }
@@ -108,11 +110,11 @@ impl Table {
     }
 
     /// Returns the value for the specified key
-    pub fn find(&self, key: usize) -> io::Result<&[u8]> {
+    pub fn find(&self, key: usize) -> io::Result<&Data> {
         let cursor = self.find_cursor(key)?;
         let leaf = cursor.leaf(self)?;
         if cursor.cell_num < leaf.num_cells && cursor.cell(self)?.key == key {
-            cursor.value(self).map(|v| v as &[u8])
+            cursor.value(self).map(|v| v as &Data)
         } else {
             Err(io::Error::other("Key not found"))
         }
