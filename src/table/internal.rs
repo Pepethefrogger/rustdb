@@ -148,6 +148,15 @@ impl<'page> InternalNodeHeader<'page> {
         min_index
     }
 
+    /// Find the ptr that this index points to
+    pub fn ptr(&self, index: usize) -> PageNum {
+        if index == self.num_keys {
+            self.right_child
+        } else {
+            self.cell_unchecked(index).ptr
+        }
+    }
+
     /// Find the page that contains the given key
     pub fn find(&self, key: usize) -> PageNum {
         let index = self.find_index(key);

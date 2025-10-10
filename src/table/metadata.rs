@@ -4,7 +4,7 @@ use std::{
     ops::Add,
 };
 
-use crate::pager::PageNum;
+use crate::{pager::PageNum, query::Identifier};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Size {
@@ -59,10 +59,10 @@ impl Type {
 const MAX_NAME_LENGTH: usize = 32;
 #[derive(Clone, Copy)]
 pub struct Field {
-    layout: Layout,
+    pub layout: Layout,
     name_len: u8,
     name: [u8; MAX_NAME_LENGTH],
-    typ: Type,
+    pub typ: Type,
 }
 
 impl Default for Field {
@@ -159,11 +159,17 @@ impl MetadataHandler {
             .find(|&field| field.name() == name)
     }
 
+    pub fn fields<'a, I: IntoIterator<Item = &'a Identifier>>(
+        &self,
+        fields: I,
+    ) -> Option<Vec<&Field>> {
+        fields.into_iter().map(|i| self.field(i)).collect()
+    }
+
     pub fn flush(&mut self) -> io::Result<()> {
         let data = unsafe { std::mem::transmute::<&Metadata, &[u8; Self::LENGTH]>(&self.metadata) };
         self.file.set_len(data.len() as u64)?;
         self.file.rewind()?;
-        println!("Writing buffer: \n{:?}", data);
         self.file.write_all(data)?;
         self.file.sync_data()
     }

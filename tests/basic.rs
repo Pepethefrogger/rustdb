@@ -126,6 +126,45 @@ fn test_split_internal_node() {
 }
 
 #[test]
+fn test_advancing_cursor() {
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+
+    let max_entries_per_leaf: usize = table.max_leaf_cells;
+    let half_entries = INTERNAL_NODE_CELL_COUNT - 1;
+    let max_entries_per_internal = max_entries_per_leaf + half_entries * (max_entries_per_leaf / 2);
+    let max_entries = max_entries_per_internal + max_entries_per_internal / 2;
+    println!(
+        "max entries -> leaf {}, internal {}, total {}",
+        max_entries_per_leaf, INTERNAL_NODE_CELL_COUNT, max_entries
+    );
+
+    let mut entries = 0usize..max_entries;
+    insert_range(&mut table, entries.clone());
+    debug_table(&table).unwrap();
+    let mut cursor = table.find_cursor(0).unwrap();
+    let e = entries.next().unwrap();
+    let bytes = cursor.value(&table).unwrap();
+    let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
+    assert_eq!(data, e);
+
+    while cursor.advance(&table).unwrap() {
+        println!("Cursor -> {:?}: {:?}", cursor.page_num, cursor.cell_num);
+        let e = entries.next().unwrap();
+        println!("Entry: {}", e);
+        let bytes = cursor.value(&table).unwrap();
+        let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
+        assert_eq!(data, e);
+    }
+    assert_eq!(entries.next(), None);
+    println!(
+        "Cursor: {{ page_num: {:?}, cell_num: {:?} }}",
+        cursor.page_num, cursor.cell_num
+    );
+}
+
+#[test]
 fn test_database() {
     let dir = tempdir().unwrap();
     let mut db = DB::new(dir.path());

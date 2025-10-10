@@ -2,8 +2,6 @@ use std::ops::Deref;
 
 use chumsky::{prelude::*, text::digits};
 
-use crate::table::metadata::Type;
-
 #[repr(transparent)]
 #[derive(Debug, PartialEq)]
 pub struct Identifier(str);

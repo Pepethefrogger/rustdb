@@ -57,6 +57,43 @@ impl Cursor {
             std::mem::transmute::<&mut LeafNodeHeader<'_>, &'table mut LeafNodeHeader<'table>>(leaf)
         })
     }
+
+    /// Advances the cursor, returns true while the cursor is valid
+    pub fn advance(&mut self, table: &Table) -> io::Result<bool> {
+        let leaf = self.leaf(table)?;
+        self.cell_num += 1;
+        if self.cell_num < leaf.num_cells {
+            return Ok(true);
+        } else if leaf.is_root() {
+            return Ok(false);
+        }
+
+        // TODO: Add a next field in the leaf nodes to improve traversing
+        let first_cell = leaf.cell_unchecked(0, table.entry_size);
+        let mut last_key = first_cell.key;
+        let mut parent_ptr = leaf.parent_ptr;
+
+        loop {
+            let parent = table
+                .pager
+                .get_node(parent_ptr)?
+                .internal()
+                .expect("Parent can't be leaf node");
+            let index = parent.find_index(last_key);
+            if index < parent.num_keys {
+                let next_internal_page_num = parent.ptr(index + 1);
+                let page_num = table.leftmost_node(next_internal_page_num)?;
+                self.page_num = page_num;
+                self.cell_num = 0;
+                return Ok(true);
+            } else if parent.is_root() {
+                return Ok(false);
+            } else {
+                last_key = parent.cell_unchecked(0).key;
+                parent_ptr = parent.parent_ptr;
+            }
+        }
+    }
 }
 
 pub struct Table {
@@ -69,7 +106,6 @@ pub struct Table {
 impl Table {
     fn from_parts(pager: Pager, metadata_handler: MetadataHandler) -> io::Result<Self> {
         let entry_size = metadata_handler.entry_size();
-        println!("Entry size: {:?}", entry_size);
         let max_leaf_cells = LeafNodeCell::max_cells(entry_size.aligned);
         Ok(Self {
             pager,
@@ -109,6 +145,15 @@ impl Table {
         Cursor { page_num, cell_num }
     }
 
+    fn leftmost_node(&self, mut child_page_num: PageNum) -> io::Result<PageNum> {
+        let mut node = self.pager.get_node(child_page_num)?;
+        while let NodeMut::InternalNode(internal) = node {
+            child_page_num = internal.cell_unchecked(0).ptr;
+            node = self.pager.get_node(child_page_num)?;
+        }
+        Ok(child_page_num)
+    }
+
     /// Returns the value for the specified key
     pub fn find(&self, key: usize) -> io::Result<&Data> {
         let cursor = self.find_cursor(key)?;
@@ -122,7 +167,7 @@ impl Table {
 
     /// Returns a cursor pointing to the specified value.
     /// Can be used for inserting, so it doesn't always point to a cell with cell.key == key
-    fn find_cursor(&self, key: usize) -> io::Result<Cursor> {
+    pub fn find_cursor(&self, key: usize) -> io::Result<Cursor> {
         let mut page_num = self.get_root();
         let mut node = self.pager.get_node(page_num)?;
         while let NodeMut::InternalNode(ref mut internal) = node {
