@@ -38,7 +38,8 @@ type ParsingError<'a> = extra::Err<Simple<'a, char>>;
 pub enum Literal<'a> {
     Identifier(&'a Identifier),
     String(&'a str),
-    Int(usize),
+    Int(isize),
+    Uint(usize),
     Float(f64),
 }
 
@@ -48,6 +49,7 @@ impl<'a> Literal<'a> {
             Self::Identifier(_) => unimplemented!(),
             Self::String(str) => str.as_bytes(),
             Self::Int(i) => &i.to_ne_bytes(),
+            Self::Uint(i) => &i.to_ne_bytes(),
             Self::Float(f) => &f.to_ne_bytes(),
         };
         buf.copy_from_slice(data);
@@ -69,8 +71,16 @@ fn num<'a>() -> impl Parser<'a, &'a str, usize, ParsingError<'a>> {
     })
 }
 
+fn unsigned_integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+    num().map(Literal::Uint)
+}
+
 fn integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
-    num().map(Literal::Int)
+    choice((
+        just("+").ignore_then(num()).map(|n| n as isize),
+        just("-").ignore_then(num()).map(|n| -(n as isize)),
+    ))
+    .map(Literal::Int)
 }
 
 fn float<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
@@ -93,6 +103,7 @@ fn value<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
     chumsky::primitive::choice((
         ident().map(Literal::Identifier),
         string(),
+        unsigned_integer(),
         integer(),
         float(),
     ))
@@ -287,9 +298,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_int() {
+    fn test_parse_uint() {
         let str = "5";
+        assert_parse!(unsigned_integer(), str, Literal::Uint(5))
+    }
+
+    #[test]
+    fn test_parse_pos_int() {
+        let str = "+5";
         assert_parse!(integer(), str, Literal::Int(5))
+    }
+
+    #[test]
+    fn test_parse_neg_int() {
+        let str = "-5";
+        assert_parse!(integer(), str, Literal::Int(-5))
     }
 
     #[test]
@@ -326,8 +349,8 @@ mod tests {
             Operation::Insert {
                 table: "table".into(),
                 values: vec![
-                    ("col1".into(), Literal::Int(3)),
-                    ("col2".into(), Literal::Int(5))
+                    ("col1".into(), Literal::Uint(3)),
+                    ("col2".into(), Literal::Uint(5))
                 ],
             }
         );
@@ -342,8 +365,8 @@ mod tests {
             Operation::Update {
                 table: "table".into(),
                 values: vec![
-                    ("col1".into(), Literal::Int(0)),
-                    ("col2".into(), Literal::Int(3))
+                    ("col1".into(), Literal::Uint(0)),
+                    ("col2".into(), Literal::Uint(3))
                 ]
             }
         );
