@@ -45,14 +45,29 @@ pub enum Literal<'a> {
 
 impl<'a> Literal<'a> {
     pub fn write_to(&self, buf: &mut [u8]) {
-        let data = match self {
+        match self {
             Self::Identifier(_) => unimplemented!(),
-            Self::String(str) => str.as_bytes(),
-            Self::Int(i) => &i.to_ne_bytes(),
-            Self::Uint(i) => &i.to_ne_bytes(),
-            Self::Float(f) => &f.to_ne_bytes(),
-        };
-        buf.copy_from_slice(data);
+            Self::String(str) => {
+                let data = str.as_bytes();
+                let len = data.len();
+                const USIZE_FIELD: usize = std::mem::size_of::<usize>();
+
+                buf[0..USIZE_FIELD].copy_from_slice(&len.to_ne_bytes());
+                buf[USIZE_FIELD..(USIZE_FIELD + len)].copy_from_slice(data);
+            }
+            Self::Int(i) => {
+                let data = &i.to_ne_bytes();
+                buf.copy_from_slice(data);
+            }
+            Self::Uint(i) => {
+                let data = &i.to_ne_bytes();
+                buf.copy_from_slice(data);
+            }
+            Self::Float(f) => {
+                let data = &f.to_ne_bytes();
+                buf.copy_from_slice(data);
+            }
+        }
     }
 }
 

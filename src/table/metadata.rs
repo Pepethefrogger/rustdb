@@ -4,7 +4,10 @@ use std::{
     ops::Add,
 };
 
-use crate::{pager::PageNum, query::Identifier};
+use crate::{
+    pager::PageNum,
+    query::{Identifier, Literal},
+};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Size {
@@ -46,12 +49,32 @@ pub enum Type {
 }
 
 impl Type {
-    fn size(&self) -> Size {
+    pub fn size(&self) -> Size {
         match self {
-            Type::String(length) => Size::new(*length),
+            Type::String(length) => Type::Uint.size() + Size::new(*length),
             Type::Int => Size::new(std::mem::size_of::<i64>()),
             Type::Uint => Size::new(std::mem::size_of::<u64>()),
             Type::Float => Size::new(std::mem::size_of::<f64>()),
+        }
+    }
+
+    pub fn read<'a>(&self, buf: &'a [u8]) -> Literal<'a> {
+        match self {
+            Type::String(_) => {
+                const USIZE_FIELD: usize = std::mem::size_of::<usize>();
+                let length = usize::from_ne_bytes(buf[0..USIZE_FIELD].try_into().unwrap());
+                let str = &buf[USIZE_FIELD..(USIZE_FIELD + length)];
+                Literal::String(unsafe { str::from_utf8_unchecked(str) })
+            }
+            Type::Int => Literal::Int(isize::from_ne_bytes(
+                buf.try_into().expect("Invalid size for parsing int"),
+            )),
+            Type::Uint => Literal::Uint(usize::from_ne_bytes(
+                buf.try_into().expect("Invalid size for parsing uint"),
+            )),
+            Type::Float => Literal::Float(f64::from_ne_bytes(
+                buf.try_into().expect("Invalid size for parsing float"),
+            )),
         }
     }
 }
