@@ -34,7 +34,7 @@ impl<'a> From<&'a Identifier> for &'a str {
 
 type ParsingError<'a> = extra::Err<Simple<'a, char>>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Literal<'a> {
     Identifier(&'a Identifier),
     String(&'a str),

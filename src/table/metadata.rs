@@ -1,13 +1,11 @@
 use std::{
+    fmt::Debug,
     fs,
     io::{self, Read, Seek, Write},
     ops::Add,
 };
 
-use crate::{
-    pager::PageNum,
-    query::{Identifier, Literal},
-};
+use crate::{pager::PageNum, query::Literal};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Size {
@@ -33,7 +31,7 @@ impl Size {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Layout {
     pub offset: usize,
     pub size: Size,
@@ -105,7 +103,13 @@ impl Name {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+impl Debug for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.str())
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Field {
     pub primary: bool,
     pub layout: Layout,
@@ -152,7 +156,7 @@ impl Metadata {
     pub fn field(&self, name: &str) -> Option<&Field> {
         self.iter().find(|&field| field.name.str() == name)
     }
-    pub fn iter(&self) -> impl Iterator<Item = &Field> {
+    pub fn iter(&self) -> impl Iterator<Item = &Field> + Clone {
         self.fields.iter().take(self.num_fields)
     }
     pub fn entry_size(&self) -> Size {
