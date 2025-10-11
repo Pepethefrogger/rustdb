@@ -1,7 +1,7 @@
 use rustdb::{
     db::{DB, OperationResult},
     query::{Identifier, Literal, Statement},
-    table::metadata::Type,
+    table::{data::Data, metadata::Type},
 };
 use tempfile::tempdir;
 
@@ -97,6 +97,151 @@ fn test_insert() {
 
     let table = db.table(table_name).unwrap();
     for (id, literals) in test_data.iter().copied().enumerate() {
+        let data = table.find(id).unwrap();
+        table
+            .metadata
+            .metadata
+            .data_fields()
+            .zip(literals)
+            .for_each(|(f, l)| {
+                let value = f.read(data);
+                assert_eq!(l, value);
+            });
+    }
+}
+
+#[test]
+fn test_select() {
+    let dir = tempdir().unwrap();
+    let mut db = DB::new(dir.path());
+    let table_name = "test";
+    let id_field = "id";
+    let fields = [
+        ("uint", Type::Uint),
+        ("int", Type::Int),
+        ("string", Type::String(255)),
+    ];
+    db.create_table(table_name, (id_field, Type::Uint), &fields)
+        .unwrap();
+
+    let table = db.table(table_name).unwrap();
+    println!(
+        "Table fields: {:?}",
+        table.metadata.metadata.fields().collect::<Vec<_>>()
+    );
+
+    let test_data: [[Literal; 3]; _] = [
+        array_into!(Literal, 5usize, 10isize, "hello"),
+        array_into!(Literal, 9usize, 5isize, "bye"),
+        array_into!(Literal, 50usize, 1000isize, "test"),
+    ];
+
+    let entry_size = table.metadata.metadata.entry_size();
+    let mut buffer = vec![0u8; entry_size.size];
+    let data_buffer = Data::new_mut(&mut buffer);
+    for (id, data) in test_data.iter().copied().enumerate() {
+        table
+            .metadata
+            .metadata
+            .data_fields()
+            .zip(data)
+            .for_each(|(f, l)| f.write(&l, data_buffer));
+        table.insert(id, data_buffer.read_all()).unwrap();
+    }
+
+    let columns: Vec<_> = fields
+        .iter()
+        .copied()
+        .map(|(name, _)| name.into())
+        .collect();
+    let select_statement = Statement {
+        operation: rustdb::query::Operation::Select {
+            table: table_name.into(),
+            columns,
+        },
+        limit: None,
+        skip: None,
+    };
+
+    let entries = match db.execute(select_statement).unwrap() {
+        OperationResult::Entries(entries) => entries,
+        _ => panic!("Should return entries"),
+    };
+
+    entries
+        .iter()
+        .zip(test_data)
+        .for_each(|(value, expected)| assert_eq!(expected, value));
+}
+
+#[test]
+fn test_update() {
+    let dir = tempdir().unwrap();
+    let mut db = DB::new(dir.path());
+    let table_name = "test";
+    let id_field = "id";
+    let fields = [
+        ("uint", Type::Uint),
+        ("int", Type::Int),
+        ("string", Type::String(255)),
+    ];
+    db.create_table(table_name, (id_field, Type::Uint), &fields)
+        .unwrap();
+
+    let table = db.table(table_name).unwrap();
+    println!(
+        "Table fields: {:?}",
+        table.metadata.metadata.fields().collect::<Vec<_>>()
+    );
+
+    let test_data: [[Literal; 3]; _] = [
+        array_into!(Literal, 5usize, 10isize, "hello"),
+        array_into!(Literal, 9usize, 5isize, "bye"),
+        array_into!(Literal, 50usize, 1000isize, "test"),
+    ];
+
+    let entry_size = table.metadata.metadata.entry_size();
+    let mut buffer = vec![0u8; entry_size.size];
+    let data_buffer = Data::new_mut(&mut buffer);
+    for (id, data) in test_data.iter().copied().enumerate() {
+        table
+            .metadata
+            .metadata
+            .data_fields()
+            .zip(data)
+            .for_each(|(f, l)| f.write(&l, data_buffer));
+        table.insert(id, data_buffer.read_all()).unwrap();
+    }
+
+    let modified_uint = 10usize;
+    let modified_int = -5isize;
+    let values = vec![
+        (fields[0].0.into(), modified_uint.into()),
+        (fields[1].0.into(), modified_int.into()),
+    ];
+
+    let update_statement = Statement {
+        operation: rustdb::query::Operation::Update {
+            table: table_name.into(),
+            values,
+        },
+        limit: None,
+        skip: None,
+    };
+    match db.execute(update_statement).unwrap() {
+        OperationResult::Count(c) => {
+            assert_eq!(c, test_data.len(), "All elements should have been updated")
+        }
+        _ => panic!("Update has to return count"),
+    }
+
+    let modified_values = test_data
+        .iter()
+        .copied()
+        .map(|[_, _, s]| [modified_uint.into(), modified_int.into(), s]);
+
+    let table = db.table(table_name).unwrap();
+    for (id, literals) in modified_values.enumerate() {
         let data = table.find(id).unwrap();
         table
             .metadata

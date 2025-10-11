@@ -207,7 +207,9 @@ impl<'a> DB<'a> {
                 }
                 Ok(OperationResult::Count(updated))
             }
-            _ => unimplemented!("Don't know how to perform operation"),
+            Operation::Delete { .. } => {
+                unimplemented!("Don't know how to delete entries")
+            }
         }
     }
 }
