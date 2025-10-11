@@ -105,7 +105,7 @@ pub struct Table {
 
 impl Table {
     fn from_parts(pager: Pager, metadata_handler: MetadataHandler) -> io::Result<Self> {
-        let entry_size = metadata_handler.entry_size();
+        let entry_size = metadata_handler.metadata.entry_size();
         let max_leaf_cells = LeafNodeCell::max_cells(entry_size.aligned);
         Ok(Self {
             pager,

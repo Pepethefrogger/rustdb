@@ -52,7 +52,12 @@ impl<'a> DB<'a> {
         Ok(self.tables.get_mut(name).unwrap())
     }
 
-    pub fn create_table(&mut self, name: &str, fields: &[(&str, Type)]) -> io::Result<()> {
+    pub fn create_table(
+        &mut self,
+        name: &str,
+        primary_field: (&str, Type),
+        fields: &[(&str, Type)],
+    ) -> io::Result<()> {
         if self.tables.contains_key(name) {
             return Err(io::Error::other("Table already exists"));
         }
@@ -65,7 +70,7 @@ impl<'a> DB<'a> {
 
         let data_file = open_options.clone().open(data_path)?;
         let metadata_file = open_options.open(metadata_path)?;
-        let table = Table::create(data_file, metadata_file, fields)?;
+        let table = Table::create(data_file, metadata_file, primary_field, fields)?;
         self.tables.insert(name.to_owned(), table);
         Ok(())
     }

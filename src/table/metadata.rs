@@ -125,13 +125,20 @@ impl Metadata {
     pub fn new(root: PageNum, primary_field: (&str, Type), fields: &[(&str, Type)]) -> Self {
         let mut metadata = Self {
             root,
-            num_fields: fields.len(),
+            num_fields: fields.len() + 1,
             fields: [Field::default(); MAX_FIELDS],
         };
+        let (name, typ) = primary_field;
+        let primary = &mut metadata.fields[0];
+        primary.primary = true;
+        primary.name.write(name);
+        primary.typ = typ;
+
         let mut offset = 0;
-        std::iter::once(primary_field)
-            .chain(fields.iter().copied())
-            .zip(metadata.fields.iter_mut())
+        fields
+            .iter()
+            .copied()
+            .zip(metadata.fields[1..].iter_mut())
             .for_each(|((name, typ), f)| {
                 f.name.write(name);
                 f.typ = typ;
@@ -142,10 +149,20 @@ impl Metadata {
         metadata.fields[0].primary = true;
         metadata
     }
-    pub fn field(&self, i: usize) -> (&str, Type) {
-        let field = &self.fields[i];
-        let name = field.name.str();
-        (name, field.typ)
+    pub fn field(&self, name: &str) -> Option<&Field> {
+        self.iter().find(|&field| field.name.str() == name)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Field> {
+        self.fields.iter().take(self.num_fields)
+    }
+    pub fn entry_size(&self) -> Size {
+        self.iter().fold(Size::default(), |acc, field| {
+            if field.primary {
+                acc
+            } else {
+                acc + field.layout.size
+            }
+        })
     }
 }
 
@@ -166,29 +183,6 @@ impl MetadataHandler {
         file.read_exact(&mut buf)?;
         let metadata = unsafe { std::mem::transmute::<[u8; Self::LENGTH], Metadata>(buf) };
         Ok(Self { file, metadata })
-    }
-
-    pub fn entry_size(&self) -> Size {
-        let metadata = &self.metadata;
-        metadata
-            .fields
-            .iter()
-            .take(metadata.num_fields)
-            .fold(Size::default(), |acc, field| acc + field.layout.size)
-    }
-
-    pub fn field(&self, name: &str) -> Option<&Field> {
-        self.metadata
-            .fields
-            .iter()
-            .find(|&field| field.name.str() == name)
-    }
-
-    pub fn fields<'a, I: IntoIterator<Item = &'a Identifier>>(
-        &self,
-        fields: I,
-    ) -> Option<Vec<&Field>> {
-        fields.into_iter().map(|i| self.field(i)).collect()
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
@@ -212,5 +206,13 @@ mod tests {
 
         assert_eq!(field.name.str(), "test");
         assert_eq!(field.typ, Type::String(10));
+    }
+
+    #[test]
+    fn test_id_field() {
+        let data_name = "test";
+        let metadata = Metadata::new(PageNum(0), ("id", Type::Uint), &[(data_name, Type::Uint)]);
+        let data_field = metadata.field(data_name).unwrap();
+        assert_eq!(data_field.layout.offset, 0);
     }
 }
