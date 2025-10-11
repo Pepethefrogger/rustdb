@@ -64,7 +64,7 @@ fn test_multiple_values() {
     let mut buf = vec![0u8; entry_size.aligned];
     let data = Data::new_mut(&mut buf);
 
-    let iter = metadata.iter().skip(1).zip(test_data.map(|(_, _, l)| l));
+    let iter = metadata.fields().skip(1).zip(test_data.map(|(_, _, l)| l));
     println!("Writing fields");
     for (f, l) in iter.clone() {
         if !f.primary {

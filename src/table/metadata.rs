@@ -5,7 +5,7 @@ use std::{
     ops::Add,
 };
 
-use crate::{pager::PageNum, query::Literal};
+use crate::{pager::PageNum, query::Literal, table::data::Data};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Size {
@@ -117,6 +117,18 @@ pub struct Field {
     pub typ: Type,
 }
 
+impl Field {
+    pub fn read<'a>(&self, buf: &'a Data) -> Literal<'a> {
+        let field_buf = buf.read(self.layout);
+        self.typ.read(field_buf)
+    }
+
+    pub fn write(&self, value: &Literal, buf: &mut Data) {
+        let field_buf = buf.get_mut(self.layout);
+        value.write_to(field_buf);
+    }
+}
+
 const MAX_FIELDS: usize = 64;
 pub struct Metadata {
     pub root: PageNum,
@@ -153,14 +165,21 @@ impl Metadata {
         metadata.fields[0].primary = true;
         metadata
     }
+    #[inline]
     pub fn field(&self, name: &str) -> Option<&Field> {
-        self.iter().find(|&field| field.name.str() == name)
+        self.fields().find(|&field| field.name.str() == name)
     }
-    pub fn iter(&self) -> impl Iterator<Item = &Field> + Clone {
+    #[inline]
+    pub fn fields(&self) -> impl Iterator<Item = &Field> + Clone {
         self.fields.iter().take(self.num_fields)
     }
+    #[inline]
+    pub fn data_fields(&self) -> impl Iterator<Item = &Field> + Clone {
+        self.fields().filter(|f| !f.primary)
+    }
+    #[inline]
     pub fn entry_size(&self) -> Size {
-        self.iter().fold(Size::default(), |acc, field| {
+        self.fields().fold(Size::default(), |acc, field| {
             if field.primary {
                 acc
             } else {

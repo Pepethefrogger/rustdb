@@ -71,6 +71,30 @@ impl<'a> Literal<'a> {
     }
 }
 
+impl From<usize> for Literal<'_> {
+    fn from(value: usize) -> Self {
+        Self::Uint(value)
+    }
+}
+
+impl From<isize> for Literal<'_> {
+    fn from(value: isize) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl From<f64> for Literal<'_> {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl<'a> From<&'a str> for Literal<'a> {
+    fn from(value: &'a str) -> Self {
+        Self::String(value)
+    }
+}
+
 fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
     none_of("\"")
         .repeated()
