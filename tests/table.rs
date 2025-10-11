@@ -30,6 +30,7 @@ fn test_persistence() {
     let mut table = Table::create(
         data_file.try_clone().unwrap(),
         metadata_file.try_clone().unwrap(),
+        ("id", Type::Uint),
         &[("num", Type::Int)],
     )
     .unwrap();
@@ -48,7 +49,13 @@ fn test_duplicate_key() {
 
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
     table.insert(0, &entry).unwrap();
     table
         .insert(0, &entry)
@@ -59,7 +66,13 @@ fn test_duplicate_key() {
 fn test_fill_leaf() {
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
 
     let max_entries_per_leaf = table.max_leaf_cells;
     println!("max entries per leaf {}", max_entries_per_leaf);
@@ -73,7 +86,13 @@ fn test_fill_leaf() {
 fn test_split_leaf_node() {
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
 
     let max_entries_per_leaf = table.max_leaf_cells;
     println!("max entries per leaf {}", max_entries_per_leaf);
@@ -87,7 +106,13 @@ fn test_split_leaf_node() {
 fn test_fill_internal_node() {
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
 
     let max_entries_per_leaf: usize = table.max_leaf_cells;
     let half_entries = INTERNAL_NODE_CELL_COUNT;
@@ -107,7 +132,13 @@ fn test_fill_internal_node() {
 fn test_split_internal_node() {
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
 
     let max_entries_per_leaf: usize = table.max_leaf_cells;
     let half_entries = INTERNAL_NODE_CELL_COUNT - 1;
@@ -128,7 +159,13 @@ fn test_split_internal_node() {
 fn test_advancing_cursor() {
     let data_file = tempfile().unwrap();
     let metadata_file = tempfile().unwrap();
-    let mut table = Table::create(data_file, metadata_file, &[("name", Type::Uint)]).unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
 
     let max_entries_per_leaf: usize = table.max_leaf_cells;
     let half_entries = INTERNAL_NODE_CELL_COUNT - 1;

@@ -115,13 +115,15 @@ impl Table {
         })
     }
 
+    /// Create a table with the specified fields.
     pub fn create(
         data_file: fs::File,
         metadata_file: fs::File,
+        primary_field: (&str, Type),
         fields: &[(&str, Type)],
     ) -> io::Result<Self> {
         let pager = Pager::new(data_file)?;
-        let metadata = Metadata::new(PageNum(1), fields);
+        let metadata = Metadata::new(PageNum(1), primary_field, fields);
         let metadata_handler = MetadataHandler::new(metadata_file, metadata);
         Self::from_parts(pager, metadata_handler)
     }

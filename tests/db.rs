@@ -6,7 +6,8 @@ fn test_database() {
     let dir = tempdir().unwrap();
     let mut db = DB::new(dir.path());
     let table_name = "test";
-    db.create_table(table_name, &[("name", Type::Int)]).unwrap();
+    db.create_table(table_name, ("id", Type::Uint), &[("name", Type::Int)])
+        .unwrap();
     let table = db.table(table_name).unwrap();
 
     let entry = &10usize.to_ne_bytes();
@@ -21,7 +22,8 @@ fn test_database_persistence() {
     let dir = tempdir().unwrap();
     let mut db = DB::new(dir.path());
     let table_name = "test";
-    db.create_table(table_name, &[("name", Type::Int)]).unwrap();
+    db.create_table(table_name, ("id", Type::Uint), &[("name", Type::Int)])
+        .unwrap();
     let table = db.table(table_name).unwrap();
 
     let entry = &10usize.to_ne_bytes();

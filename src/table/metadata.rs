@@ -107,6 +107,7 @@ impl Name {
 
 #[derive(Clone, Copy, Default)]
 pub struct Field {
+    pub primary: bool,
     pub layout: Layout,
     pub name: Name,
     pub typ: Type,
@@ -120,16 +121,16 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn new(root: PageNum, fields: &[(&str, Type)]) -> Self {
+    /// Create a new metadata struct with the corresponding fields.
+    pub fn new(root: PageNum, primary_field: (&str, Type), fields: &[(&str, Type)]) -> Self {
         let mut metadata = Self {
             root,
             num_fields: fields.len(),
             fields: [Field::default(); MAX_FIELDS],
         };
         let mut offset = 0;
-        fields
-            .iter()
-            .copied()
+        std::iter::once(primary_field)
+            .chain(fields.iter().copied())
             .zip(metadata.fields.iter_mut())
             .for_each(|((name, typ), f)| {
                 f.name.write(name);
@@ -138,6 +139,7 @@ impl Metadata {
                 f.layout = Layout { offset, size };
                 offset += size.aligned;
             });
+        metadata.fields[0].primary = true;
         metadata
     }
     pub fn field(&self, i: usize) -> (&str, Type) {
