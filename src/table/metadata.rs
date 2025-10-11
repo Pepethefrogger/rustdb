@@ -80,36 +80,36 @@ impl Type {
 }
 
 const MAX_NAME_LENGTH: usize = 32;
-#[derive(Clone, Copy)]
-pub struct Field {
-    pub layout: Layout,
+#[derive(Clone, Copy, Default)]
+pub struct Name {
     name_len: u8,
     name: [u8; MAX_NAME_LENGTH],
-    pub typ: Type,
 }
 
-impl Default for Field {
-    fn default() -> Self {
-        Self {
-            layout: Layout::default(),
-            name_len: 0,
-            name: [0; MAX_NAME_LENGTH],
-            typ: Type::default(),
-        }
+impl Name {
+    pub fn new(str: &str) -> Self {
+        let mut name = Name::default();
+        name.write(str);
+        name
     }
-}
 
-impl Field {
-    fn name(&self) -> &str {
+    pub fn str(&self) -> &str {
         let bytes = &self.name[..self.name_len as usize];
         unsafe { str::from_utf8_unchecked(bytes) }
     }
 
-    fn write_name(&mut self, name: &str) {
+    pub fn write(&mut self, name: &str) {
         let len = name.len();
         self.name[..len].copy_from_slice(name.as_bytes());
         self.name_len = len as u8;
     }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Field {
+    pub layout: Layout,
+    pub name: Name,
+    pub typ: Type,
 }
 
 const MAX_FIELDS: usize = 64;
@@ -132,7 +132,7 @@ impl Metadata {
             .copied()
             .zip(metadata.fields.iter_mut())
             .for_each(|((name, typ), f)| {
-                f.write_name(name);
+                f.name.write(name);
                 f.typ = typ;
                 let size = typ.size();
                 f.layout = Layout { offset, size };
@@ -142,7 +142,7 @@ impl Metadata {
     }
     pub fn field(&self, i: usize) -> (&str, Type) {
         let field = &self.fields[i];
-        let name = field.name();
+        let name = field.name.str();
         (name, field.typ)
     }
 }
@@ -179,7 +179,7 @@ impl MetadataHandler {
         self.metadata
             .fields
             .iter()
-            .find(|&field| field.name() == name)
+            .find(|&field| field.name.str() == name)
     }
 
     pub fn fields<'a, I: IntoIterator<Item = &'a Identifier>>(
@@ -205,10 +205,10 @@ mod tests {
     #[test]
     fn test_field() {
         let mut field = Field::default();
-        field.write_name("test");
+        field.name.write("test");
         field.typ = Type::String(10);
 
-        assert_eq!(field.name(), "test");
+        assert_eq!(field.name.str(), "test");
         assert_eq!(field.typ, Type::String(10));
     }
 }
