@@ -36,7 +36,6 @@ type ParsingError<'a> = extra::Err<Simple<'a, char>>;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Literal<'a> {
-    Identifier(&'a Identifier),
     String(&'a str),
     Int(isize),
     Uint(usize),
@@ -46,7 +45,6 @@ pub enum Literal<'a> {
 impl<'a> Literal<'a> {
     pub fn write_to(&self, buf: &mut [u8]) {
         match self {
-            Self::Identifier(_) => unimplemented!(),
             Self::String(str) => {
                 let data = str.as_bytes();
                 let len = data.len();
@@ -95,7 +93,7 @@ impl<'a> From<&'a str> for Literal<'a> {
     }
 }
 
-fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> + Clone {
     none_of("\"")
         .repeated()
         .to_slice()
@@ -103,18 +101,18 @@ fn string<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
         .map(Literal::String)
 }
 
-fn num<'a>() -> impl Parser<'a, &'a str, usize, ParsingError<'a>> {
+fn num<'a>() -> impl Parser<'a, &'a str, usize, ParsingError<'a>> + Clone {
     digits(10).to_slice().try_map(|v: &str, span| {
         let digit: Result<usize, _> = v.parse();
         digit.map_err(|_e| Simple::new(Some('a'.into()), span))
     })
 }
 
-fn unsigned_integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+fn unsigned_integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> + Clone {
     num().map(Literal::Uint)
 }
 
-fn integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+fn integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> + Clone {
     choice((
         just("+").ignore_then(num()).map(|n| n as isize),
         just("-").ignore_then(num()).map(|n| -(n as isize)),
@@ -122,7 +120,7 @@ fn integer<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
     .map(Literal::Int)
 }
 
-fn float<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
+fn float<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> + Clone {
     digits(10)
         .to_slice()
         .then_ignore(just("."))
@@ -138,35 +136,31 @@ fn float<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
         })
 }
 
-fn value<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> {
-    chumsky::primitive::choice((
-        ident().map(Literal::Identifier),
-        string(),
-        unsigned_integer(),
-        integer(),
-        float(),
-    ))
+fn value<'a>() -> impl Parser<'a, &'a str, Literal<'a>, ParsingError<'a>> + Clone {
+    chumsky::primitive::choice((string(), unsigned_integer(), integer(), float()))
 }
 
-fn ident<'a>() -> impl Parser<'a, &'a str, &'a Identifier, ParsingError<'a>> {
+fn ident<'a>() -> impl Parser<'a, &'a str, &'a Identifier, ParsingError<'a>> + Clone {
     text::ident().map(Identifier::new)
 }
 
 fn parentheses<'a, T>(
-    parser: impl Parser<'a, &'a str, T, ParsingError<'a>>,
-) -> impl Parser<'a, &'a str, Vec<T>, ParsingError<'a>> {
+    parser: impl Parser<'a, &'a str, T, ParsingError<'a>> + Clone,
+) -> impl Parser<'a, &'a str, Vec<T>, ParsingError<'a>> + Clone {
     parser
         .separated_by(just(",").padded())
         .collect::<Vec<_>>()
         .delimited_by(just("("), just(")"))
 }
 
-fn binary_operation<'a, T, S>(
-    left: impl Parser<'a, &'a str, T, ParsingError<'a>>,
-    right: impl Parser<'a, &'a str, S, ParsingError<'a>>,
-    sym: &'a str,
-) -> impl Parser<'a, &'a str, (T, S), ParsingError<'a>> {
-    left.then_ignore(just(sym).padded()).then(right)
+fn binary_operation<'a, L, S, R>(
+    left: impl Parser<'a, &'a str, L, ParsingError<'a>> + Clone,
+    right: impl Parser<'a, &'a str, R, ParsingError<'a>> + Clone,
+    sym: impl Parser<'a, &'a str, S, ParsingError<'a>> + Clone,
+) -> impl Parser<'a, &'a str, (L, R, S), ParsingError<'a>> + Clone {
+    left.then(sym.padded())
+        .then(right)
+        .map(|((l, s), r)| (l, r, s))
 }
 
 #[derive(Debug, PartialEq)]
@@ -200,7 +194,7 @@ impl<'a> Operation<'a> {
 }
 
 /// SELECT a, b, c FROM table
-fn select<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+fn select<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> + Clone {
     let columns = ident()
         .separated_by(just(",").padded())
         .at_least(1)
@@ -215,7 +209,7 @@ fn select<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
 }
 
 /// INSERT INTO table (col1, col2) VALUES (1, 2)
-fn insert<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+fn insert<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> + Clone {
     just("INSERT")
         .padded()
         .then(just("INTO").padded())
@@ -234,8 +228,9 @@ fn insert<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
 }
 
 /// UPDATE table SET col1 = 1
-fn update<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
-    let values = binary_operation(ident(), value(), "=")
+fn update<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> + Clone {
+    let values = binary_operation(ident(), value(), just("=").ignored())
+        .map(|(l, r, _)| (l, r))
         .padded()
         .separated_by(just(","))
         .collect::<Vec<_>>();
@@ -248,7 +243,7 @@ fn update<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
 }
 
 /// DELETE FROM table
-fn delete<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
+fn delete<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> + Clone {
     just("DELETE")
         .padded()
         .ignore_then(just("FROM").padded())
@@ -259,7 +254,7 @@ fn delete<'a>() -> impl Parser<'a, &'a str, Operation<'a>, ParsingError<'a>> {
 #[derive(Debug, PartialEq)]
 pub struct Statement<'a> {
     pub operation: Operation<'a>,
-    // TODO: implement where
+    pub wher: Option<BoxedExpression<'a>>,
     pub limit: Option<usize>,
     pub skip: Option<usize>,
 }
@@ -268,36 +263,140 @@ impl<'a> Statement<'a> {
     fn new(operation: Operation<'a>) -> Self {
         Self {
             operation,
+            wher: None,
             limit: None,
             skip: None,
         }
     }
 }
 
-enum Clause {
-    Limit(usize),
-    Skip(usize),
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Comparison {
+    Equals,
+    NotEquals,
+    LessThanEquals,
+    LessThan,
+    MoreThanEquals,
+    MoreThan,
 }
 
-fn parse_limit<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
+fn comparison<'a>() -> impl Parser<'a, &'a str, Comparison, ParsingError<'a>> + Clone {
+    choice((
+        just("=").to(Comparison::Equals),
+        just("!=").to(Comparison::NotEquals),
+        just("<=").to(Comparison::LessThanEquals),
+        just("<").to(Comparison::LessThan),
+        just(">=").to(Comparison::MoreThanEquals),
+        just(">").to(Comparison::MoreThan),
+    ))
+}
+
+type BoxedExpression<'a> = Box<Expression<'a>>;
+#[derive(Clone, PartialEq, Debug)]
+pub enum Expression<'a> {
+    And(BoxedExpression<'a>, BoxedExpression<'a>),
+    Or(BoxedExpression<'a>, BoxedExpression<'a>),
+    Binary {
+        left: &'a Identifier,
+        right: Literal<'a>,
+        sym: Comparison,
+    },
+}
+
+impl<'a> Expression<'a> {
+    pub fn binary(
+        left: impl Into<&'a Identifier>,
+        right: impl Into<Literal<'a>>,
+        sym: Comparison,
+    ) -> Self {
+        Self::Binary {
+            left: left.into(),
+            right: right.into(),
+            sym,
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! and {
+    ($x:expr, $y: expr) => {
+        Expression::And(Box::from($x), Box::from($y))
+    };
+    ($head: expr, $($tail:expr),*) => {
+        Expression::And(Box::from($head), Box::from(and!($($tail),*)))
+    };
+}
+
+#[macro_export]
+macro_rules! or {
+    ($x:expr, $y: expr) => {
+        Expression::Or(Box::from($x), Box::from($y))
+    };
+    ($head: expr, $($tail:expr),*) => {
+        Expression::Or(Box::from($head), Box::from(or!($($tail),*)))
+    };
+}
+
+fn binary_expression<'a>() -> impl Parser<'a, &'a str, Expression<'a>, ParsingError<'a>> + Clone {
+    binary_operation(ident(), value(), comparison()).map(|(left, right, sym)| Expression::Binary {
+        left,
+        right,
+        sym,
+    })
+}
+
+fn expression<'a>() -> impl Parser<'a, &'a str, BoxedExpression<'a>, ParsingError<'a>> + Clone {
+    recursive::<_, BoxedExpression<'a>, _, _, _>(|expr| {
+        let and_expr = expr
+            .clone()
+            .then_ignore(just("AND").padded())
+            .then(expr.clone())
+            .delimited_by(just("(").padded(), just(")").padded())
+            .map(|(l, r)| Box::new(and!(l, r)));
+        let or_expr = expr
+            .clone()
+            .then_ignore(just("OR").padded())
+            .then(expr)
+            .delimited_by(just("(").padded(), just(")").padded())
+            .map(|(l, r)| Box::new(or!(l, r)));
+        let binary = binary_expression().map(Box::new);
+
+        choice((and_expr, or_expr, binary)).padded()
+    })
+}
+
+enum Clause<'a> {
+    Limit(usize),
+    Skip(usize),
+    Where(BoxedExpression<'a>),
+}
+
+fn parse_limit<'a>() -> impl Parser<'a, &'a str, Clause<'a>, ParsingError<'a>> + Clone {
     just("LIMIT")
         .padded()
         .ignore_then(num().padded())
         .map(Clause::Limit)
 }
 
-fn parse_skip<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
+fn parse_skip<'a>() -> impl Parser<'a, &'a str, Clause<'a>, ParsingError<'a>> + Clone {
     just("SKIP")
         .padded()
         .ignore_then(num().padded())
         .map(Clause::Skip)
 }
 
-fn parse_clause<'a>() -> impl Parser<'a, &'a str, Clause, ParsingError<'a>> {
-    chumsky::primitive::choice((parse_limit(), parse_skip()))
+fn parse_where<'a>() -> impl Parser<'a, &'a str, Clause<'a>, ParsingError<'a>> + Clone {
+    just("WHERE")
+        .padded()
+        .ignore_then(expression())
+        .map(Clause::Where)
 }
 
-pub fn parser<'a>() -> impl Parser<'a, &'a str, Statement<'a>, ParsingError<'a>> {
+fn parse_clause<'a>() -> impl Parser<'a, &'a str, Clause<'a>, ParsingError<'a>> + Clone {
+    chumsky::primitive::choice((parse_limit(), parse_skip(), parse_where()))
+}
+
+pub fn parser<'a>() -> impl Parser<'a, &'a str, Statement<'a>, ParsingError<'a>> + Clone {
     let operation_parser = chumsky::primitive::choice((select(), insert(), update(), delete()));
     operation_parser.map(Statement::new).foldl(
         parse_clause().repeated(),
@@ -305,6 +404,7 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Statement<'a>, ParsingError<'a>>
             match clause {
                 Clause::Skip(s) => statement.skip = Some(s),
                 Clause::Limit(l) => statement.limit = Some(l),
+                Clause::Where(w) => statement.wher = Some(w),
             }
             statement
         },
@@ -364,6 +464,69 @@ mod tests {
     fn test_parse_string() {
         let str = "\"string\"";
         assert_parse!(string(), str, Literal::String("string"))
+    }
+
+    #[test]
+    fn test_parse_comparison() {
+        let str = ">";
+        assert_parse!(comparison(), str, Comparison::MoreThan)
+    }
+
+    #[test]
+    fn parse_binary_expression() {
+        let str = "id < 5";
+        assert_parse!(
+            binary_expression(),
+            str,
+            Expression::binary("id", 5usize, Comparison::LessThan)
+        );
+    }
+
+    #[test]
+    fn parse_and_expression() {
+        let str = "(id < 5 AND (size > 10 AND field = 5))";
+        assert_parse!(
+            expression(),
+            str,
+            and!(
+                Expression::binary("id", 5usize, Comparison::LessThan),
+                Expression::binary("size", 10usize, Comparison::MoreThan),
+                Expression::binary("field", 5usize, Comparison::Equals)
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn parse_or_expression() {
+        let str = "(id < 5 OR (size > 10 OR field = 5))";
+        assert_parse!(
+            expression(),
+            str,
+            or!(
+                Expression::binary("id", 5usize, Comparison::LessThan),
+                Expression::binary("size", 10usize, Comparison::MoreThan),
+                Expression::binary("field", 5usize, Comparison::Equals)
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn parse_complex_expression() {
+        let str = "(id < 5 OR (size > 10 AND field = 5))";
+        assert_parse!(
+            expression(),
+            str,
+            or!(
+                Expression::binary("id", 5usize, Comparison::LessThan),
+                and!(
+                    Expression::binary("size", 10usize, Comparison::MoreThan),
+                    Expression::binary("field", 5usize, Comparison::Equals)
+                )
+            )
+            .into()
+        );
     }
 
     #[test]
@@ -435,6 +598,7 @@ mod tests {
             str,
             Statement {
                 operation,
+                wher: None,
                 skip: Some(5),
                 limit: Some(10)
             }

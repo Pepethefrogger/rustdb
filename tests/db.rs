@@ -88,6 +88,7 @@ fn test_insert() {
                 table: table_name.into(),
                 values,
             },
+            wher: None,
             limit: None,
             skip: None,
         };
@@ -159,6 +160,7 @@ fn test_select() {
             table: table_name.into(),
             columns,
         },
+        wher: None,
         limit: None,
         skip: None,
     };
@@ -225,6 +227,7 @@ fn test_update() {
             table: table_name.into(),
             values,
         },
+        wher: None,
         limit: None,
         skip: None,
     };
