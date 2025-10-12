@@ -2,6 +2,12 @@ use std::ops::Deref;
 
 use chumsky::{prelude::*, text::digits};
 
+use crate::{
+    and,
+    expression::{BoxedExpression, Comparison, Expression},
+    or,
+};
+
 #[repr(transparent)]
 #[derive(Debug, PartialEq)]
 pub struct Identifier(str);
@@ -270,16 +276,6 @@ impl<'a> Statement<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Comparison {
-    Equals,
-    NotEquals,
-    LessThanEquals,
-    LessThan,
-    MoreThanEquals,
-    MoreThan,
-}
-
 fn comparison<'a>() -> impl Parser<'a, &'a str, Comparison, ParsingError<'a>> + Clone {
     choice((
         just("=").to(Comparison::Equals),
@@ -289,52 +285,6 @@ fn comparison<'a>() -> impl Parser<'a, &'a str, Comparison, ParsingError<'a>> + 
         just(">=").to(Comparison::MoreThanEquals),
         just(">").to(Comparison::MoreThan),
     ))
-}
-
-type BoxedExpression<'a> = Box<Expression<'a>>;
-#[derive(Clone, PartialEq, Debug)]
-pub enum Expression<'a> {
-    And(BoxedExpression<'a>, BoxedExpression<'a>),
-    Or(BoxedExpression<'a>, BoxedExpression<'a>),
-    Binary {
-        left: &'a Identifier,
-        right: Literal<'a>,
-        sym: Comparison,
-    },
-}
-
-impl<'a> Expression<'a> {
-    pub fn binary(
-        left: impl Into<&'a Identifier>,
-        right: impl Into<Literal<'a>>,
-        sym: Comparison,
-    ) -> Self {
-        Self::Binary {
-            left: left.into(),
-            right: right.into(),
-            sym,
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! and {
-    ($x:expr, $y: expr) => {
-        Expression::And(Box::from($x), Box::from($y))
-    };
-    ($head: expr, $($tail:expr),*) => {
-        Expression::And(Box::from($head), Box::from(and!($($tail),*)))
-    };
-}
-
-#[macro_export]
-macro_rules! or {
-    ($x:expr, $y: expr) => {
-        Expression::Or(Box::from($x), Box::from($y))
-    };
-    ($head: expr, $($tail:expr),*) => {
-        Expression::Or(Box::from($head), Box::from(or!($($tail),*)))
-    };
 }
 
 fn binary_expression<'a>() -> impl Parser<'a, &'a str, Expression<'a>, ParsingError<'a>> + Clone {
