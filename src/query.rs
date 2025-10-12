@@ -3,9 +3,8 @@ use std::ops::Deref;
 use chumsky::{prelude::*, text::digits};
 
 use crate::{
-    and,
+    expr_and, expr_or,
     expression::{BoxedExpression, Comparison, Expression},
-    or,
 };
 
 #[repr(transparent)]
@@ -302,13 +301,13 @@ fn expression<'a>() -> impl Parser<'a, &'a str, BoxedExpression<'a>, ParsingErro
             .then_ignore(just("AND").padded())
             .then(expr.clone())
             .delimited_by(just("(").padded(), just(")").padded())
-            .map(|(l, r)| Box::new(and!(l, r)));
+            .map(|(l, r)| Box::new(expr_and!(l, r)));
         let or_expr = expr
             .clone()
             .then_ignore(just("OR").padded())
             .then(expr)
             .delimited_by(just("(").padded(), just(")").padded())
-            .map(|(l, r)| Box::new(or!(l, r)));
+            .map(|(l, r)| Box::new(expr_or!(l, r)));
         let binary = binary_expression().map(Box::new);
 
         choice((and_expr, or_expr, binary)).padded()
@@ -438,7 +437,7 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            and!(
+            expr_and!(
                 Expression::binary("id", 5usize, Comparison::LessThan),
                 Expression::binary("size", 10usize, Comparison::MoreThan),
                 Expression::binary("field", 5usize, Comparison::Equals)
@@ -453,7 +452,7 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            or!(
+            expr_or!(
                 Expression::binary("id", 5usize, Comparison::LessThan),
                 Expression::binary("size", 10usize, Comparison::MoreThan),
                 Expression::binary("field", 5usize, Comparison::Equals)
@@ -468,9 +467,9 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            or!(
+            expr_or!(
                 Expression::binary("id", 5usize, Comparison::LessThan),
-                and!(
+                expr_and!(
                     Expression::binary("size", 10usize, Comparison::MoreThan),
                     Expression::binary("field", 5usize, Comparison::Equals)
                 )

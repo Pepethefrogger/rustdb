@@ -85,12 +85,17 @@ impl<'a> Expression<'a> {
         }
     }
 
+    /// This function returns the fields that need to be passed to the eval function.
+    /// It iterates over all the identifiers of expressions recursively and returns them
     pub fn fields(&self) -> Vec<&str> {
         let mut v = vec![];
         self.field_recursive(&mut v);
         v
     }
 
+    /// This function uses an iterator of Literals that should come from the fields in self.fields
+    /// to evaluate an expression
+    /// Self::extract_index should be used before to get index constraints instead of filtering
     pub fn eval(&self, iter: &mut impl Iterator<Item = &'a Literal<'a>>) -> io::Result<bool> {
         match self {
             Self::And(l, r) => Ok(l.eval(iter)? && r.eval(iter)?),
@@ -101,25 +106,105 @@ impl<'a> Expression<'a> {
             }
         }
     }
+
+    /// Strips all of the index comparisons into constraints
+    /// This removes all references to the index from the expression
+    pub fn extract_index(&mut self, index_name: &str) -> Constraint<'a> {
+        match self {
+            Expression::And(left, right) => {
+                let l = left.extract_index(index_name);
+                let r = right.extract_index(index_name);
+                match (l, r) {
+                    (Constraint::Empty, Constraint::Empty) => Constraint::Empty,
+                    (c @ Constraint::SimpleConstraint(..), Constraint::Empty) => {
+                        *self = *right.clone();
+                        c
+                    }
+                    (Constraint::Empty, c @ Constraint::SimpleConstraint(..)) => {
+                        *self = *left.clone();
+                        c
+                    }
+                    (l, r) => Constraint::And(l.into(), r.into()),
+                }
+            }
+            Expression::Or(left, right) => {
+                let l = left.extract_index(index_name);
+                let r = right.extract_index(index_name);
+                match (l, r) {
+                    (Constraint::Empty, Constraint::Empty) => Constraint::Empty,
+                    (c @ Constraint::SimpleConstraint(..), Constraint::Empty) => {
+                        *self = *right.clone();
+                        c
+                    }
+                    (Constraint::Empty, c @ Constraint::SimpleConstraint(..)) => {
+                        *self = *left.clone();
+                        c
+                    }
+                    (l, r) => Constraint::Or(l.into(), r.into()),
+                }
+            }
+            Expression::Binary { left, right, sym } => {
+                if &(***left) == index_name {
+                    Constraint::SimpleConstraint(*sym, *right)
+                } else {
+                    Constraint::Empty
+                }
+            }
+        }
+    }
 }
 
 #[macro_export]
-macro_rules! and {
+macro_rules! expr_and {
     ($x:expr, $y: expr) => {
         Expression::And(Box::from($x), Box::from($y))
     };
     ($head: expr, $($tail:expr),*) => {
-        Expression::And(Box::from($head), Box::from(and!($($tail),*)))
+        Expression::And(Box::from($head), Box::from(expr_and!($($tail),*)))
     };
 }
 
 #[macro_export]
-macro_rules! or {
+macro_rules! expr_or {
     ($x:expr, $y: expr) => {
         Expression::Or(Box::from($x), Box::from($y))
     };
     ($head: expr, $($tail:expr),*) => {
-        Expression::Or(Box::from($head), Box::from(or!($($tail),*)))
+        Expression::Or(Box::from($head), Box::from(expr_or!($($tail),*)))
+    };
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Constraint<'a> {
+    And(Box<Constraint<'a>>, Box<Constraint<'a>>),
+    Or(Box<Constraint<'a>>, Box<Constraint<'a>>),
+    SimpleConstraint(Comparison, Literal<'a>),
+    Empty,
+}
+
+impl<'a> Constraint<'a> {
+    pub fn simple(comp: Comparison, lit: impl Into<Literal<'a>>) -> Self {
+        Self::SimpleConstraint(comp, lit.into())
+    }
+}
+
+#[macro_export]
+macro_rules! constr_and {
+    ($x:expr, $y: expr) => {
+        Constraint::And(Box::from($x), Box::from($y))
+    };
+    ($head: expr, $($tail:expr),*) => {
+        Constraint::And(Box::from($head), Box::from(constr_and!($($tail),*)))
+    };
+}
+
+#[macro_export]
+macro_rules! constr_or {
+    ($x:expr, $y: expr) => {
+        Constraint::Or(Box::from($x), Box::from($y))
+    };
+    ($head: expr, $($tail:expr),*) => {
+        Constraint::Or(Box::from($head), Box::from(constr_or!($($tail),*)))
     };
 }
 
@@ -129,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_fields() {
-        let expr = and!(
+        let expr = expr_and!(
             Expression::binary("id", 5usize, Comparison::LessThan),
             Expression::binary("test", 10usize, Comparison::MoreThan)
         );
@@ -139,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_true_expression() {
-        let expr = and!(
+        let expr = expr_and!(
             Expression::binary("id", 5usize, Comparison::LessThan),
             Expression::binary("test", 10usize, Comparison::MoreThan)
         );
@@ -150,12 +235,54 @@ mod tests {
 
     #[test]
     fn test_false_expression() {
-        let expr = or!(
+        let expr = expr_or!(
             Expression::binary("id", 5usize, Comparison::LessThan),
             Expression::binary("test", 10usize, Comparison::MoreThan)
         );
         let iter = [Literal::Uint(9), Literal::Uint(10)];
         let res = expr.eval(&mut iter.iter()).unwrap();
         assert!(!res, "This expression should return false")
+    }
+
+    #[test]
+    fn test_extracting_index_constraint() {
+        let index = "id";
+        let sub1 = expr_and!(
+            Expression::binary(index, 20usize, Comparison::MoreThan),
+            Expression::binary("test", 5usize, Comparison::Equals)
+        );
+        let sub2 = expr_and!(
+            Expression::binary(index, 5usize, Comparison::LessThan),
+            Expression::binary("test", 10usize, Comparison::LessThan)
+        );
+
+        let mut expr = expr_or!(sub1, sub2);
+        let constraint = expr.extract_index(index);
+        assert_eq!(
+            constr_or!(
+                Constraint::simple(Comparison::MoreThan, 20usize),
+                Constraint::simple(Comparison::LessThan, 5usize)
+            ),
+            constraint
+        );
+    }
+
+    #[test]
+    fn test_extracting_index_remaining_expression() {
+        let index = "id";
+        let first_expr = Expression::binary("test", 5usize, Comparison::Equals);
+        let sub1 = expr_and!(
+            Expression::binary(index, 20usize, Comparison::MoreThan),
+            first_expr.clone()
+        );
+        let second_expr = Expression::binary("test", 10usize, Comparison::LessThan);
+        let sub2 = expr_and!(
+            Expression::binary(index, 5usize, Comparison::LessThan),
+            second_expr.clone()
+        );
+
+        let mut expr = expr_or!(sub1, sub2);
+        let _constraint = expr.extract_index(index);
+        assert_eq!(expr_or!(first_expr, second_expr), expr);
     }
 }
