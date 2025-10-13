@@ -1,11 +1,9 @@
+use crate::expression;
 use std::ops::Deref;
 
 use chumsky::{prelude::*, text::digits};
 
-use crate::{
-    expr_and, expr_or,
-    expression::{BoxedExpression, Comparison, Expression},
-};
+use crate::expression::{BoxedExpression, Comparison, Expression};
 
 #[repr(transparent)]
 #[derive(Debug, PartialEq)]
@@ -317,13 +315,13 @@ fn expression<'a>() -> impl Parser<'a, &'a str, BoxedExpression<'a>, ParsingErro
             .then_ignore(just("AND").padded())
             .then(expr.clone())
             .delimited_by(just("(").padded(), just(")").padded())
-            .map(|(l, r)| Box::new(expr_and!(l, r)));
+            .map(|(l, r)| Box::new(expression!(l & r)));
         let or_expr = expr
             .clone()
             .then_ignore(just("OR").padded())
             .then(expr)
             .delimited_by(just("(").padded(), just(")").padded())
-            .map(|(l, r)| Box::new(expr_or!(l, r)));
+            .map(|(l, r)| Box::new(expression!(l | r)));
         let binary = binary_expression().map(Box::new);
 
         choice((and_expr, or_expr, binary)).padded()
@@ -453,12 +451,7 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            expr_and!(
-                Expression::binary("id", 5usize, Comparison::LessThan),
-                Expression::binary("size", 10usize, Comparison::MoreThan),
-                Expression::binary("field", 5usize, Comparison::Equals)
-            )
-            .into()
+            expression!(("id" < 5usize) & ("size" > 10usize) & ("field" = 5usize)).into()
         );
     }
 
@@ -468,12 +461,7 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            expr_or!(
-                Expression::binary("id", 5usize, Comparison::LessThan),
-                Expression::binary("size", 10usize, Comparison::MoreThan),
-                Expression::binary("field", 5usize, Comparison::Equals)
-            )
-            .into()
+            expression!(("id" < 5usize) | ("size" > 10usize) | ("field" = 5usize)).into()
         );
     }
 
@@ -483,14 +471,7 @@ mod tests {
         assert_parse!(
             expression(),
             str,
-            expr_or!(
-                Expression::binary("id", 5usize, Comparison::LessThan),
-                expr_and!(
-                    Expression::binary("size", 10usize, Comparison::MoreThan),
-                    Expression::binary("field", 5usize, Comparison::Equals)
-                )
-            )
-            .into()
+            expression!(("id" < 5usize) | (("size" > 10usize) & ("field" = 5usize))).into()
         );
     }
 
