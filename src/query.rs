@@ -39,12 +39,27 @@ impl<'a> From<&'a Identifier> for &'a str {
 
 type ParsingError<'a> = extra::Err<Simple<'a, char>>;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
 pub enum Literal<'a> {
     String(&'a str),
     Int(isize),
     Uint(usize),
     Float(f64),
+}
+
+// This is true under the case that our set contains literals of the same type, which should be
+// true
+impl Eq for Literal<'_> {}
+
+impl Ord for Literal<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or_else(|| {
+            panic!(
+                "Can't compare literals with different types: {:?} and {:?}",
+                self, other
+            )
+        })
+    }
 }
 
 impl<'a> Literal<'a> {
@@ -275,6 +290,7 @@ impl<'a> Statement<'a> {
     }
 }
 
+/// TODO: Make sure that literals correspond to their expected type
 fn comparison<'a>() -> impl Parser<'a, &'a str, Comparison, ParsingError<'a>> + Clone {
     choice((
         just("=").to(Comparison::Equals),
