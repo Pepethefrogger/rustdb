@@ -1,3 +1,5 @@
+use crate::range;
+use crate::simple_range;
 use std::{cmp::Ordering, io};
 
 use crate::query::{Identifier, Literal};
@@ -131,7 +133,7 @@ impl<'a> Expression<'a> {
             }
             Expression::Binary { left, right, sym } => {
                 if &(***left) == index_name {
-                    Constraint::SimpleConstraint(*sym, *right)
+                    Constraint::simple(*sym, *right)
                 } else {
                     Constraint::Empty
                 }
@@ -161,16 +163,39 @@ macro_rules! expr_or {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct SimpleConstraint<'a> {
+    comp: Comparison,
+    lit: Literal<'a>,
+}
+
+impl<'a> SimpleConstraint<'a> {
+    fn new(comp: Comparison, lit: Literal<'a>) -> Self {
+        Self { comp, lit }
+    }
+
+    fn range(&self) -> Range<Literal<'a>> {
+        match self.comp {
+            Comparison::Equals => range!({ self.lit }),
+            Comparison::NotEquals => range!({,(self.lit)} | {(self.lit),}),
+            Comparison::LessThanEquals => range!({,[self.lit]}),
+            Comparison::LessThan => range!({,(self.lit)}),
+            Comparison::MoreThanEquals => range!({[self.lit],}),
+            Comparison::MoreThan => range!({(self.lit),}),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Constraint<'a> {
     And(Box<Constraint<'a>>, Box<Constraint<'a>>),
     Or(Box<Constraint<'a>>, Box<Constraint<'a>>),
-    SimpleConstraint(Comparison, Literal<'a>),
+    SimpleConstraint(SimpleConstraint<'a>),
     Empty,
 }
 
 impl<'a> Constraint<'a> {
     pub fn simple(comp: Comparison, lit: impl Into<Literal<'a>>) -> Self {
-        Self::SimpleConstraint(comp, lit.into())
+        Self::SimpleConstraint(SimpleConstraint::new(comp, lit.into()))
     }
 }
 
@@ -453,7 +478,7 @@ impl<T: IntervalElement> SimpleRange<T> {
 }
 
 #[macro_export]
-macro_rules! range {
+macro_rules! simple_range {
     ({[$x:expr] , [$y:expr]}) => {
         SimpleRange::Values(
             IntervalStart::Closed($x.into()),
@@ -496,11 +521,83 @@ macro_rules! range {
     ({$x: expr}) => {
         SimpleRange::Value($x.into())
     };
-    ($x:tt & $y:tt) => {
-        range!($x).union(&range!($y))
+    ($x:tt | $($y:tt)*) => {
+        simple_range!($x).union(&simple_range!($($y)*))
     };
-    ($x:tt | $y:tt) => {
-        range!($x).intersection(&range!($y))
+    ($x:tt & $($y:tt)*) => {
+        simple_range!($x).intersection(&simple_range!($($y)*))
+    };
+    (($($x:tt)*)) => {
+        simple_range!($($x)*)
+    }
+}
+
+#[derive(Debug)]
+pub struct Range<T: IntervalElement> {
+    buf: Vec<SimpleRange<T>>,
+}
+
+impl<T: IntervalElement> Range<T> {
+    pub fn new(range: SimpleRange<T>) -> Self {
+        Self { buf: vec![range] }
+    }
+    fn push_union(&mut self, range: SimpleRange<T>) {
+        let mut new_buf = vec![];
+
+        let mut union = range;
+        for r in &self.buf {
+            if union.overlaps(r) {
+                union = union.union(r);
+            } else {
+                new_buf.push(*r);
+            }
+        }
+        new_buf.push(union);
+        self.buf = new_buf;
+    }
+
+    pub fn union(&mut self, other: Self) {
+        for r in &other.buf {
+            self.push_union(*r);
+        }
+    }
+
+    fn push_intersection(&mut self, range: SimpleRange<T>) {
+        for r in &mut self.buf {
+            if range.overlaps(r) {
+                *r = range.intersection(r);
+            }
+        }
+    }
+
+    pub fn intersection(&mut self, other: Self) {
+        for r in other.buf {
+            self.push_intersection(r);
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! range {
+    ($x:tt & $($y:tt)*) => {
+        {
+            let mut r = range!($x);
+            r.intersection(range!($($y)*));
+            r
+        }
+    };
+    ($x:tt | $($y:tt)*) => {
+        {
+            let mut r = range!($x);
+            r.union(range!($($y)*));
+            r
+        }
+    };
+    (($($x:tt)*)) => {
+        range!($($x)*)
+    };
+    ($x:tt) => {
+        Range::new(simple_range!($x))
     };
 }
 
@@ -626,81 +723,110 @@ mod tests {
 
     #[test]
     fn test_simple_range_union() {
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {(3usize), (10usize)}
-            &
+            |
             {(4usize), [10usize]}
         );
-        assert_eq!(range!({(3usize), [10usize]}), r);
+        assert_eq!(simple_range!({(3usize), [10usize]}), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {(3usize), }
-            &
+            |
             {(2usize), [10usize]}
         );
-        assert_eq!(range!({(2usize), }), r);
+        assert_eq!(simple_range!({(2usize), }), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {,(5usize)}
-            &
+            |
             {(2usize), [10usize]}
         );
-        assert_eq!(range!({,[10usize]}), r);
+        assert_eq!(simple_range!({,[10usize]}), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {,(5usize)}
-            &
+            |
             {(2usize),}
         );
-        assert_eq!(range!({,}), r);
+        assert_eq!(simple_range!({,}), r);
 
-        let r: SimpleRange<Literal> = range!({,} & {(10usize), [15usize]});
-        assert_eq!(range!({,}), r);
+        let r: SimpleRange<Literal> = simple_range!({,} | {(10usize), [15usize]});
+        assert_eq!(simple_range!({,}), r);
 
-        let r: SimpleRange<Literal> = range!({} & {(4usize), [10usize]});
-        assert_eq!(range!({(4usize), [10usize]}), r);
+        let r: SimpleRange<Literal> = simple_range!({} | {(4usize), [10usize]});
+        assert_eq!(simple_range!({(4usize), [10usize]}), r);
 
-        let r: SimpleRange<Literal> = range!({5usize} & {(5usize), [10usize]});
-        assert_eq!(range!({[5usize], [10usize]}), r);
+        let r: SimpleRange<Literal> = simple_range!({5usize} | {(5usize), [10usize]});
+        assert_eq!(simple_range!({[5usize], [10usize]}), r);
     }
 
     #[test]
     fn test_simple_range_intersection() {
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {(3usize), (10usize)}
-            |
+            &
             {(4usize), [10usize]}
         );
-        assert_eq!(range!({(4usize), (10usize)}), r);
+        assert_eq!(simple_range!({(4usize), (10usize)}), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {(4usize), }
-            |
+            &
             {(2usize), [10usize]}
         );
-        assert_eq!(range!({(4usize), [10usize]}), r);
+        assert_eq!(simple_range!({(4usize), [10usize]}), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {,(5usize)}
-            |
+            &
             {(2usize), [10usize]}
         );
-        assert_eq!(range!({(2usize),(5usize)}), r);
+        assert_eq!(simple_range!({(2usize),(5usize)}), r);
 
-        let r: SimpleRange<Literal> = range!(
+        let r: SimpleRange<Literal> = simple_range!(
             {,(5usize)}
-            |
+            &
             {(2usize),}
         );
-        assert_eq!(range!({(2usize), (5usize)}), r);
+        assert_eq!(simple_range!({(2usize), (5usize)}), r);
 
-        let r: SimpleRange<Literal> = range!({,} | {(10usize), [15usize]});
-        assert_eq!(range!({(10usize), [15usize]}), r);
+        let r: SimpleRange<Literal> = simple_range!({,} & {(10usize), [15usize]});
+        assert_eq!(simple_range!({(10usize), [15usize]}), r);
 
-        let r: SimpleRange<Literal> = range!({} | {(4usize), [10usize]});
-        assert_eq!(range!({}), r);
+        let r: SimpleRange<Literal> = simple_range!({} & {(4usize), [10usize]});
+        assert_eq!(simple_range!({}), r);
 
-        let r: SimpleRange<Literal> = range!({6usize} | {(5usize), [10usize]});
-        assert_eq!(range!({ 6usize }), r);
+        let r: SimpleRange<Literal> = simple_range!({6usize} & {(5usize), [10usize]});
+        assert_eq!(simple_range!({ 6usize }), r);
+    }
+
+    #[test]
+    fn test_range_union() {
+        let r: Range<Literal> = range!(
+            ({(4usize), (10usize)} |
+            {(5usize), [8usize]}) |
+            {(9usize), [20usize]}
+        );
+
+        assert_eq!(r.buf, vec![simple_range!({(4usize), [20usize]})]);
+    }
+
+    #[test]
+    fn test_range_intersection() {
+        let r: Range<Literal> = range!(
+            ({(4usize), (10usize)}
+            |
+            {(14usize), (20usize)})
+            & {(5usize), (16usize)}
+        );
+
+        assert_eq!(
+            r.buf,
+            vec![
+                simple_range!({(5usize), (10usize)}),
+                simple_range!({(14usize),(16usize)})
+            ]
+        );
     }
 }
