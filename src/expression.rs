@@ -322,6 +322,7 @@ impl<T: IntervalElement> Ord for IntervalEnd<T> {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SimpleRange<T: IntervalElement> {
     Values(IntervalStart<T>, IntervalEnd<T>),
+    Value(T),
     Start(IntervalStart<T>),
     End(IntervalEnd<T>),
     Empty,
@@ -332,6 +333,7 @@ impl<T: IntervalElement> SimpleRange<T> {
     fn value_past_start(&self, v: &T) -> bool {
         match self {
             Self::Values(s, _) => s.past(v),
+            Self::Value(v) => matches!(v.cmp(v), Ordering::Equal | Ordering::Greater),
             Self::Start(s) => s.past(v),
             Self::End(_) => true,
             Self::Empty => true,
@@ -342,6 +344,7 @@ impl<T: IntervalElement> SimpleRange<T> {
     fn value_before_end(&self, v: &T) -> bool {
         match self {
             Self::Values(_, e) => e.before(v),
+            Self::Value(v) => matches!(v.cmp(v), Ordering::Equal | Ordering::Less),
             Self::Start(_) => true,
             Self::End(e) => e.before(v),
             Self::Empty => true,
@@ -357,6 +360,7 @@ impl<T: IntervalElement> SimpleRange<T> {
     pub fn overlaps(&self, other: &Self) -> bool {
         match self {
             Self::Values(s, e) => other.contains(s.value()) || other.contains(e.value()),
+            Self::Value(v) => other.contains(v),
             Self::Start(s) => other.value_before_end(s.value()),
             Self::End(e) => other.value_past_start(e.value()),
             Self::Empty => true,
@@ -382,6 +386,24 @@ impl<T: IntervalElement> SimpleRange<T> {
                 let max_end = std::cmp::max(e1, e2);
                 Self::End(*max_end)
             }
+            (Self::Values(s1, e1), Self::Value(v)) | (Self::Value(v), Self::Values(s1, e1)) => {
+                let s2 = &IntervalStart::Closed(*v);
+                let min_start = std::cmp::min(s1, s2);
+                let e2 = &IntervalEnd::Closed(*v);
+                let max_end = std::cmp::max(e1, e2);
+                Self::Values(*min_start, *max_end)
+            }
+            (Self::Value(v), Self::Start(s)) | (Self::Start(s), Self::Value(v)) => {
+                let s2 = &IntervalStart::Closed(*v);
+                let min_start = std::cmp::min(s, s2);
+                Self::Start(*min_start)
+            }
+            (Self::Value(v), Self::End(e)) | (Self::End(e), Self::Value(v)) => {
+                let e2 = &IntervalEnd::Closed(*v);
+                let max_end = std::cmp::max(e, e2);
+                Self::End(*max_end)
+            }
+            (v @ Self::Value(_), Self::Value(_)) => *v,
             (Self::Start(s1), Self::Start(s2)) => {
                 let min_start = std::cmp::min(s1, s2);
                 Self::Start(*min_start)
@@ -425,6 +447,7 @@ impl<T: IntervalElement> SimpleRange<T> {
             (Self::Start(s), Self::End(e)) | (Self::End(e), Self::Start(s)) => Self::Values(*s, *e),
             (Self::Full, o) | (o, Self::Full) => *o,
             (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
+            (v @ Self::Value(_), _) | (_, v @ Self::Value(_)) => *v,
         }
     }
 }
@@ -469,6 +492,9 @@ macro_rules! range {
     };
     ({}) => {
         SimpleRange::Empty
+    };
+    ({$x: expr}) => {
+        SimpleRange::Value($x.into())
     };
     ($x:tt & $y:tt) => {
         range!($x).union(&range!($y))
@@ -633,6 +659,9 @@ mod tests {
 
         let r: SimpleRange<Literal> = range!({} & {(4usize), [10usize]});
         assert_eq!(range!({(4usize), [10usize]}), r);
+
+        let r: SimpleRange<Literal> = range!({5usize} & {(5usize), [10usize]});
+        assert_eq!(range!({[5usize], [10usize]}), r);
     }
 
     #[test]
@@ -670,5 +699,8 @@ mod tests {
 
         let r: SimpleRange<Literal> = range!({} | {(4usize), [10usize]});
         assert_eq!(range!({}), r);
+
+        let r: SimpleRange<Literal> = range!({6usize} | {(5usize), [10usize]});
+        assert_eq!(range!({ 6usize }), r);
     }
 }
