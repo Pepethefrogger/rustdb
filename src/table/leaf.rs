@@ -3,7 +3,7 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use crate::{
     pager::{PAGE_HEADER_SIZE, PAGE_SIZE, Page, PageNum},
-    table::{Size, data::Data, node::NodeType},
+    table::{data::Data, metadata::Size, node::NodeType},
 };
 
 pub const LEAF_NODE_CELL_KEY_SIZE: usize = std::mem::size_of::<LeafNodeCell>();

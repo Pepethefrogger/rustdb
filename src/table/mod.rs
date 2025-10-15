@@ -1,9 +1,13 @@
-use std::{
-    error::Error,
-    fmt::Display,
-    fs,
-    io::{self},
-};
+pub mod data;
+pub mod metadata;
+
+pub mod internal;
+pub mod leaf;
+pub mod node;
+
+pub mod debug;
+
+use std::{fs, io};
 
 use crate::{
     pager::{PageNum, Pager},
@@ -15,14 +19,6 @@ use crate::{
         node::NodeMut,
     },
 };
-
-pub mod debug;
-
-pub mod data;
-pub mod internal;
-pub mod leaf;
-pub mod metadata;
-pub mod node;
 
 pub struct Cursor {
     pub page_num: PageNum,
@@ -97,18 +93,6 @@ pub enum TableError {
     DuplicateKey,
     KeyNotFound,
 }
-
-impl Display for TableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            Self::DuplicateKey => "Duplicate key found",
-            Self::KeyNotFound => "Key not found",
-        };
-        write!(f, "{}", message)
-    }
-}
-
-impl Error for TableError {}
 
 pub type TableResult<T> = Result<T, TableError>;
 

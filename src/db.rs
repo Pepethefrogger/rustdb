@@ -6,10 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::table::{Table, TableError};
 use crate::{
     query::{Literal, Operation, Statement},
-    table::{Table, TableError, data::Data, metadata::Type},
-    utils::EntryVector,
+    table::{data::Data, metadata::Type},
+    utils::entry_vec::EntryVector,
 };
 
 pub enum OperationResult<'a> {
