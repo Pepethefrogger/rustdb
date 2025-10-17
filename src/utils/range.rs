@@ -32,6 +32,13 @@ impl<T: IntervalElement> IntervalStart<T> {
             Self::Closed(c) => c,
         }
     }
+
+    pub fn open(&self) -> bool {
+        match self {
+            Self::Open(_) => true,
+            Self::Closed(_) => false,
+        }
+    }
 }
 
 impl<T: IntervalElement> Eq for IntervalStart<T> {}
@@ -93,6 +100,13 @@ impl<T: IntervalElement> IntervalEnd<T> {
             Self::Closed(c) => c,
         }
     }
+
+    pub fn open(&self) -> bool {
+        match self {
+            Self::Open(_) => true,
+            Self::Closed(_) => false,
+        }
+    }
 }
 
 impl<T: IntervalElement> Eq for IntervalEnd<T> {}
@@ -139,7 +153,7 @@ pub enum SimpleRange<T: IntervalElement> {
 }
 
 impl<T: IntervalElement> SimpleRange<T> {
-    fn value_past_start(&self, v: &T) -> bool {
+    pub fn value_past_start(&self, v: &T) -> bool {
         match self {
             Self::Values(s, _) => s.past(v),
             Self::Value(v) => matches!(v.cmp(v), Ordering::Equal | Ordering::Greater),
@@ -150,7 +164,7 @@ impl<T: IntervalElement> SimpleRange<T> {
         }
     }
 
-    fn value_before_end(&self, v: &T) -> bool {
+    pub fn value_before_end(&self, v: &T) -> bool {
         match self {
             Self::Values(_, e) => e.before(v),
             Self::Value(v) => matches!(v.cmp(v), Ordering::Equal | Ordering::Less),
@@ -257,6 +271,30 @@ impl<T: IntervalElement> SimpleRange<T> {
             (Self::Full, o) | (o, Self::Full) => *o,
             (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
             (v @ Self::Value(_), _) | (_, v @ Self::Value(_)) => *v,
+        }
+    }
+
+    /// Returns the value at the start None if there isn't a start
+    pub fn start(&self) -> Option<T> {
+        match self {
+            Self::Value(v) => Some(*v),
+            Self::Values(s, _) => Some(*s.value()),
+            Self::Start(s) => Some(*s.value()),
+            Self::End(_) => None,
+            Self::Empty => None,
+            Self::Full => None,
+        }
+    }
+
+    /// Returns the value at the end None if there isn't an end
+    pub fn end(&self) -> Option<T> {
+        match self {
+            Self::Value(v) => Some(*v),
+            Self::Values(_, e) => Some(*e.value()),
+            Self::Start(_) => None,
+            Self::End(e) => Some(*e.value()),
+            Self::Empty => None,
+            Self::Full => None,
         }
     }
 }
@@ -370,6 +408,10 @@ impl<T: IntervalElement> Range<T> {
         for r in other.buf {
             self.push_intersection(r);
         }
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &SimpleRange<T>> {
+        self.buf.iter()
     }
 }
 

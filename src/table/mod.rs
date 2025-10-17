@@ -20,6 +20,7 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct Cursor {
     pub page_num: PageNum,
     pub cell_num: usize,
@@ -84,6 +85,41 @@ impl Cursor {
                 last_key = parent.cell_unchecked(0).key;
                 parent_ptr = parent.parent_ptr;
             }
+        }
+    }
+
+    pub fn into_iter<'a>(self, table: &'a Table) -> CursorIterator<'a> {
+        CursorIterator {
+            table,
+            cursor: self,
+            started: false,
+        }
+    }
+}
+
+pub struct CursorIterator<'a> {
+    table: &'a Table,
+    cursor: Cursor,
+    started: bool,
+}
+
+impl<'a> Iterator for CursorIterator<'a> {
+    type Item = (usize, &'a mut Data);
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.started {
+            let leaf = self.cursor.leaf(self.table);
+            if leaf.num_cells == 0 {
+                None
+            } else {
+                self.started = true;
+                let cell = self.cursor.cell(self.table);
+                Some((cell.key, cell.data_mut(self.table.entry_size)))
+            }
+        } else if self.cursor.advance(self.table) {
+            let cell = self.cursor.cell(self.table);
+            Some((cell.key, cell.data_mut(self.table.entry_size)))
+        } else {
+            None
         }
     }
 }
@@ -154,6 +190,31 @@ impl Table {
             node = self.pager.get_node(child_page_num);
         }
         child_page_num
+    }
+
+    fn rightmost_node(&self, mut child_page_num: PageNum) -> PageNum {
+        let mut node = self.pager.get_node(child_page_num);
+        while let NodeMut::InternalNode(internal) = node {
+            child_page_num = internal.right_child;
+            node = self.pager.get_node(child_page_num);
+        }
+        child_page_num
+    }
+
+    /// Returns a cursor pointing to the smallest node
+    pub fn min_cursor(&self) -> Cursor {
+        let page_num = self.leftmost_node(self.get_root());
+        self.cursor(page_num, 0)
+    }
+
+    /// Returns a cursor pointing to the biggest node
+    pub fn max_cursor(&self) -> Cursor {
+        let page_num = self.rightmost_node(self.get_root());
+        let mut cursor = self.cursor(page_num, 0);
+        let leaf = cursor.leaf(self);
+        let num_cells = leaf.num_cells;
+        cursor.cell_num = num_cells - 1;
+        cursor
     }
 
     /// Returns the value for the specified key

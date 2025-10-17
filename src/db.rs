@@ -1,3 +1,13 @@
+use crate::{
+    expression::Expression,
+    query::{Literal, Operation, Statement},
+    table::{
+        Table, TableError,
+        data::Data,
+        metadata::{Field, Type},
+    },
+    utils::{entry_vec::EntryVector, range::Range},
+};
 use std::{
     collections::HashMap,
     fs::OpenOptions,
@@ -6,15 +16,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::table::{Table, TableError};
-use crate::{
-    query::{Literal, Operation, Statement},
-    table::{data::Data, metadata::Type},
-    utils::entry_vec::EntryVector,
-};
-
 pub enum OperationResult<'a> {
-    Empty,
+    Ok,
     Entries(EntryVector<Literal<'a>>),
     Count(usize),
 }
@@ -112,7 +115,7 @@ impl<'a> DB<'a> {
         Ok(())
     }
 
-    pub fn execute(&mut self, statement: Statement) -> DBResult<OperationResult<'_>> {
+    pub fn execute<'b>(&'b mut self, statement: Statement<'b>) -> DBResult<OperationResult<'b>> {
         let operation = statement.operation;
         let table_id = operation.table();
         let table = self.table(table_id)?;
@@ -126,41 +129,23 @@ impl<'a> DB<'a> {
 
                 let mut entries = EntryVector::<Literal>::new(fields.len());
 
-                let mut cursor = table.find_cursor(0);
+                let cursor = FilteringCursor::from_options(
+                    table,
+                    statement.limit,
+                    statement.skip,
+                    statement.wher.map(|x| *x),
+                );
 
-                // TODO: Implement a better way to check if db is empty
-                if cursor.leaf(table).num_cells == 0 {
-                    return Ok(OperationResult::Entries(entries));
-                }
-                if let Some(skip) = statement.skip {
-                    for _ in 0..skip {
-                        if !cursor.advance(table) {
-                            return Ok(OperationResult::Entries(entries));
-                        }
-                    }
-                }
-
-                let limit = statement.limit.unwrap_or(usize::MAX);
-                let mut selected = 0usize;
-                loop {
-                    if selected >= limit {
-                        break;
-                    }
-                    let data = cursor.value(table);
+                cursor.iter().for_each(|(id, data)| {
                     let literals = fields.iter().map(|f| {
                         if f.primary {
-                            let id = cursor.cell(table).key;
                             Literal::Uint(id)
                         } else {
                             f.read(data)
                         }
                     });
-                    selected += 1;
                     entries.push(literals);
-                    if !cursor.advance(table) {
-                        break;
-                    }
-                }
+                });
                 Ok(OperationResult::Entries(entries))
             }
             Operation::Insert { values, .. } => {
@@ -189,7 +174,7 @@ impl<'a> DB<'a> {
                 let id = unsafe { id.assume_init() };
 
                 table.insert(id, &value)?;
-                Ok(OperationResult::Empty)
+                Ok(OperationResult::Ok)
             }
             Operation::Update { values, .. } => {
                 let fields: Vec<_> = values
@@ -200,39 +185,109 @@ impl<'a> DB<'a> {
                     })
                     .collect();
 
-                let mut cursor = table.find_cursor(0);
-                // TODO: Implement a better way to check if db is empty
-                if cursor.leaf(table).num_cells == 0 {
-                    return Ok(OperationResult::Count(0));
-                }
-                if let Some(skip) = statement.skip {
-                    for _ in 0..skip {
-                        if !cursor.advance(table) {
-                            return Ok(OperationResult::Count(0));
-                        }
-                    }
-                }
+                let cursor = FilteringCursor::from_options(
+                    table,
+                    statement.limit,
+                    statement.skip,
+                    statement.wher.map(|x| *x),
+                );
 
-                let limit = statement.limit.unwrap_or(usize::MAX);
-                let mut updated = 0usize;
-                loop {
-                    if updated >= limit {
-                        break;
-                    }
-                    let data = cursor.value(table);
+                let mut count = 0usize;
+                cursor.iter().for_each(|(_, data)| {
                     for (field, literal) in fields.iter() {
                         field.write(literal, data);
                     }
-                    updated += 1;
-                    if !cursor.advance(table) {
-                        break;
-                    }
-                }
-                Ok(OperationResult::Count(updated))
+                    count += 1;
+                });
+                Ok(OperationResult::Count(count))
             }
             Operation::Delete { .. } => {
                 unimplemented!("Don't know how to delete entries")
             }
         }
+    }
+}
+
+pub struct FilteringCursor<'a> {
+    table: &'a Table,
+    limit: usize,
+    skip: usize,
+    fields: Vec<Field>,
+    expression: Expression<'a>,
+    range: Range<Literal<'a>>,
+}
+
+impl<'a> FilteringCursor<'a> {
+    pub fn new(
+        table: &'a Table,
+        limit: usize,
+        skip: usize,
+        mut expression: Expression<'a>,
+    ) -> Self {
+        let index = table
+            .metadata
+            .metadata
+            .fields()
+            .find(|f| f.primary)
+            .expect("Primary field not found");
+        let index_name = index.name.str();
+        let range = expression.extract_index(index_name);
+        let field_names = expression.fields();
+        let fields: Vec<_> = field_names
+            .iter()
+            .map(|f| *table.metadata.metadata.field(f).unwrap())
+            .collect();
+        Self {
+            table,
+            limit,
+            skip,
+            fields,
+            expression,
+            range,
+        }
+    }
+
+    pub fn from_options(
+        table: &'a Table,
+        limit: Option<usize>,
+        skip: Option<usize>,
+        expression: Option<Expression<'a>>,
+    ) -> Self {
+        Self::new(
+            table,
+            limit.unwrap_or(usize::MAX),
+            skip.unwrap_or(0),
+            expression.unwrap_or(Expression::Empty),
+        )
+    }
+
+    fn evaluate_entry(&self, index: usize, data: &Data) -> bool {
+        let mut iter = self.fields.iter().map(|f| {
+            if f.primary {
+                Literal::Uint(index)
+            } else {
+                f.read(data)
+            }
+        });
+        self.expression.eval(&mut iter)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &'a mut Data)> {
+        self.range
+            .iter()
+            .flat_map(|r| {
+                let cursor = match r.start() {
+                    Some(Literal::Uint(id)) => self.table.find_cursor(id),
+                    None => self.table.min_cursor(),
+                    _ => unimplemented!("Only uint can be used as id"),
+                };
+                cursor
+                    .into_iter(self.table)
+                    .skip_while(|&(index, _)| !r.value_past_start(&index.into()))
+                    .take_while(|&(index, _)| r.value_before_end(&index.into()))
+                    .filter(|&(index, ref data)| self.evaluate_entry(index, data))
+            })
+            .skip(self.skip)
+            .take(self.limit)
     }
 }
