@@ -1,4 +1,6 @@
 use std::{
+    error::Error,
+    fmt::Display,
     fs,
     io::{self},
 };
@@ -90,6 +92,26 @@ impl Cursor {
     }
 }
 
+#[derive(Debug)]
+pub enum TableError {
+    DuplicateKey,
+    KeyNotFound,
+}
+
+impl Display for TableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::DuplicateKey => "Duplicate key found",
+            Self::KeyNotFound => "Key not found",
+        };
+        write!(f, "{}", message)
+    }
+}
+
+impl Error for TableError {}
+
+pub type TableResult<T> = Result<T, TableError>;
+
 pub struct Table {
     pub pager: Pager,
     pub metadata: MetadataHandler,
@@ -151,19 +173,19 @@ impl Table {
     }
 
     /// Returns the value for the specified key
-    pub fn find(&self, key: usize) -> io::Result<&Data> {
-        let cursor = self.find_cursor(key)?;
+    pub fn find(&self, key: usize) -> TableResult<&Data> {
+        let cursor = self.find_cursor(key);
         let leaf = cursor.leaf(self);
         if cursor.cell_num < leaf.num_cells && cursor.cell(self).key == key {
             Ok(cursor.value(self))
         } else {
-            Err(io::Error::other("Key not found"))
+            Err(TableError::KeyNotFound)
         }
     }
 
     /// Returns a cursor pointing to the specified value.
     /// Can be used for inserting, so it doesn't always point to a cell with cell.key == key
-    pub fn find_cursor(&self, key: usize) -> io::Result<Cursor> {
+    pub fn find_cursor(&self, key: usize) -> Cursor {
         let mut page_num = self.get_root();
         let mut node = self.pager.get_node(page_num);
         while let NodeMut::InternalNode(ref mut internal) = node {
@@ -173,19 +195,19 @@ impl Table {
         }
         let leaf = node.leaf().unwrap();
         let cell_num = leaf.find(key, self.entry_size);
-        Ok(self.cursor(page_num, cell_num))
+        self.cursor(page_num, cell_num)
     }
 
     // TODO: Add a method for making entries without values
-    pub fn insert(&mut self, key: usize, value: &[u8]) -> io::Result<()> {
+    pub fn insert(&mut self, key: usize, value: &[u8]) -> TableResult<()> {
         let entry_size = self.entry_size;
         let max_leaf_cells = self.max_leaf_cells;
-        let mut cursor = self.find_cursor(key)?;
+        let mut cursor = self.find_cursor(key);
         let leaf = cursor.leaf(self);
         if cursor.cell_num < leaf.num_cells
             && leaf.cell_unchecked(cursor.cell_num, entry_size).key == key
         {
-            return Err(io::Error::other("Duplicate key"));
+            return Err(TableError::DuplicateKey);
         }
 
         if leaf.num_cells == max_leaf_cells {

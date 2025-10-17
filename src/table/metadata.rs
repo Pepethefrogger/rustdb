@@ -119,11 +119,13 @@ pub struct Field {
 
 impl Field {
     pub fn read<'a>(&self, buf: &'a Data) -> Literal<'a> {
+        assert!(!self.primary, "Can't read primary fields");
         let field_buf = buf.read(self.layout);
         self.typ.read(field_buf)
     }
 
     pub fn write(&self, value: &Literal, buf: &mut Data) {
+        assert!(!self.primary, "Can't write primary fields");
         let field_buf = buf.get_mut(self.layout);
         value.write_to(field_buf);
     }

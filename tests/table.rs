@@ -179,7 +179,7 @@ fn test_advancing_cursor() {
     let mut entries = 0usize..max_entries;
     insert_range(&mut table, entries.clone());
     debug_table(&table);
-    let mut cursor = table.find_cursor(0).unwrap();
+    let mut cursor = table.find_cursor(0);
     let e = entries.next().unwrap();
     let bytes = cursor.value(&table);
     let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
