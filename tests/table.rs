@@ -78,7 +78,7 @@ fn test_fill_leaf() {
     println!("max entries per leaf {}", max_entries_per_leaf);
     let entries = 0usize..max_entries_per_leaf;
     insert_range(&mut table, entries.clone());
-    debug_table(&table).unwrap();
+    debug_table(&table);
     check_range(&mut table, entries);
 }
 
@@ -98,7 +98,7 @@ fn test_split_leaf_node() {
     println!("max entries per leaf {}", max_entries_per_leaf);
     let entries = 0usize..(max_entries_per_leaf + max_entries_per_leaf / 2);
     insert_range(&mut table, entries.clone());
-    debug_table(&table).unwrap();
+    debug_table(&table);
     check_range(&mut table, entries);
 }
 
@@ -124,7 +124,7 @@ fn test_fill_internal_node() {
 
     let entries = 0usize..max_entries;
     insert_range(&mut table, entries.clone());
-    debug_table(&table).unwrap();
+    debug_table(&table);
     check_range(&mut table, entries);
 }
 
@@ -151,7 +151,7 @@ fn test_split_internal_node() {
 
     let entries = 0usize..max_entries;
     insert_range(&mut table, entries.clone());
-    debug_table(&table).unwrap();
+    debug_table(&table);
     check_range(&mut table, entries);
 }
 
@@ -178,18 +178,18 @@ fn test_advancing_cursor() {
 
     let mut entries = 0usize..max_entries;
     insert_range(&mut table, entries.clone());
-    debug_table(&table).unwrap();
+    debug_table(&table);
     let mut cursor = table.find_cursor(0).unwrap();
     let e = entries.next().unwrap();
-    let bytes = cursor.value(&table).unwrap();
+    let bytes = cursor.value(&table);
     let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
     assert_eq!(data, e);
 
-    while cursor.advance(&table).unwrap() {
+    while cursor.advance(&table) {
         println!("Cursor -> {:?}: {:?}", cursor.page_num, cursor.cell_num);
         let e = entries.next().unwrap();
         println!("Entry: {}", e);
-        let bytes = cursor.value(&table).unwrap();
+        let bytes = cursor.value(&table);
         let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
         assert_eq!(data, e);
     }

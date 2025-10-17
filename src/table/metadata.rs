@@ -208,12 +208,14 @@ impl MetadataHandler {
         Ok(Self { file, metadata })
     }
 
-    pub fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) {
         let data = unsafe { std::mem::transmute::<&Metadata, &[u8; Self::LENGTH]>(&self.metadata) };
-        self.file.set_len(data.len() as u64)?;
-        self.file.rewind()?;
-        self.file.write_all(data)?;
-        self.file.sync_data()
+        self.file
+            .set_len(data.len() as u64)
+            .expect("Failed to set metadata length");
+        self.file.rewind().expect("Failed to reset metadata fd");
+        self.file.write_all(data).expect("Failed to write metadata");
+        self.file.sync_data().expect("Failed to sync metadata");
     }
 }
 

@@ -29,43 +29,37 @@ pub struct Cursor {
 
 impl Cursor {
     /// Returns the value that this cursor points to
-    pub fn value<'table>(&self, table: &'table Table) -> io::Result<&'table mut Data> {
-        let cell = self.cell(table)?;
-        Ok(cell.data_mut(table.entry_size))
+    pub fn value<'table>(&self, table: &'table Table) -> &'table mut Data {
+        let cell = self.cell(table);
+        cell.data_mut(table.entry_size)
     }
     /// Returns the entry that this cursor points to
-    pub fn cell<'table>(
-        &self,
-        table: &'table Table,
-    ) -> io::Result<&'table mut LeafNodeCell<'table>> {
+    pub fn cell<'table>(&self, table: &'table Table) -> &'table mut LeafNodeCell<'table> {
         let cell_num = self.cell_num;
-        let leaf = self.leaf(table)?;
-        Ok(leaf.cell_mut_unchecked(cell_num, table.entry_size))
+        let leaf = self.leaf(table);
+        leaf.cell_mut_unchecked(cell_num, table.entry_size)
     }
     /// Returns the leaf node that this cursor points to
     #[allow(clippy::mut_from_ref)]
-    pub fn leaf<'table>(
-        &self,
-        table: &'table Table,
-    ) -> io::Result<&'table mut LeafNodeHeader<'table>> {
+    pub fn leaf<'table>(&self, table: &'table Table) -> &'table mut LeafNodeHeader<'table> {
         let leaf = table
             .pager
-            .get_node(self.page_num)?
+            .get_node(self.page_num)
             .leaf()
             .expect("A cursor has to point to a leaf");
-        Ok(unsafe {
+        unsafe {
             std::mem::transmute::<&mut LeafNodeHeader<'_>, &'table mut LeafNodeHeader<'table>>(leaf)
-        })
+        }
     }
 
     /// Advances the cursor, returns true while the cursor is valid
-    pub fn advance(&mut self, table: &Table) -> io::Result<bool> {
-        let leaf = self.leaf(table)?;
+    pub fn advance(&mut self, table: &Table) -> bool {
+        let leaf = self.leaf(table);
         self.cell_num += 1;
         if self.cell_num < leaf.num_cells {
-            return Ok(true);
+            return true;
         } else if leaf.is_root() {
-            return Ok(false);
+            return false;
         }
 
         // TODO: Add a next field in the leaf nodes to improve traversing
@@ -76,18 +70,18 @@ impl Cursor {
         loop {
             let parent = table
                 .pager
-                .get_node(parent_ptr)?
+                .get_node(parent_ptr)
                 .internal()
                 .expect("Parent can't be leaf node");
             let index = parent.find_index(last_key);
             if index < parent.num_keys {
                 let next_internal_page_num = parent.ptr(index + 1);
-                let page_num = table.leftmost_node(next_internal_page_num)?;
+                let page_num = table.leftmost_node(next_internal_page_num);
                 self.page_num = page_num;
                 self.cell_num = 0;
-                return Ok(true);
+                return true;
             } else if parent.is_root() {
-                return Ok(false);
+                return false;
             } else {
                 last_key = parent.cell_unchecked(0).key;
                 parent_ptr = parent.parent_ptr;
@@ -147,21 +141,21 @@ impl Table {
         Cursor { page_num, cell_num }
     }
 
-    fn leftmost_node(&self, mut child_page_num: PageNum) -> io::Result<PageNum> {
-        let mut node = self.pager.get_node(child_page_num)?;
+    fn leftmost_node(&self, mut child_page_num: PageNum) -> PageNum {
+        let mut node = self.pager.get_node(child_page_num);
         while let NodeMut::InternalNode(internal) = node {
             child_page_num = internal.cell_unchecked(0).ptr;
-            node = self.pager.get_node(child_page_num)?;
+            node = self.pager.get_node(child_page_num);
         }
-        Ok(child_page_num)
+        child_page_num
     }
 
     /// Returns the value for the specified key
     pub fn find(&self, key: usize) -> io::Result<&Data> {
         let cursor = self.find_cursor(key)?;
-        let leaf = cursor.leaf(self)?;
-        if cursor.cell_num < leaf.num_cells && cursor.cell(self)?.key == key {
-            cursor.value(self).map(|v| v as &Data)
+        let leaf = cursor.leaf(self);
+        if cursor.cell_num < leaf.num_cells && cursor.cell(self).key == key {
+            Ok(cursor.value(self))
         } else {
             Err(io::Error::other("Key not found"))
         }
@@ -171,10 +165,10 @@ impl Table {
     /// Can be used for inserting, so it doesn't always point to a cell with cell.key == key
     pub fn find_cursor(&self, key: usize) -> io::Result<Cursor> {
         let mut page_num = self.get_root();
-        let mut node = self.pager.get_node(page_num)?;
+        let mut node = self.pager.get_node(page_num);
         while let NodeMut::InternalNode(ref mut internal) = node {
             page_num = internal.find(key);
-            let page = self.pager.get_page(page_num)?;
+            let page = self.pager.get_page(page_num);
             node = page.page_header_mut().node_mut();
         }
         let leaf = node.leaf().unwrap();
@@ -187,7 +181,7 @@ impl Table {
         let entry_size = self.entry_size;
         let max_leaf_cells = self.max_leaf_cells;
         let mut cursor = self.find_cursor(key)?;
-        let leaf = cursor.leaf(self)?;
+        let leaf = cursor.leaf(self);
         if cursor.cell_num < leaf.num_cells
             && leaf.cell_unchecked(cursor.cell_num, entry_size).key == key
         {
@@ -196,9 +190,9 @@ impl Table {
 
         if leaf.num_cells == max_leaf_cells {
             if leaf.is_root() {
-                self.split_root_leaf_and_insert(&mut cursor, key, value)?;
+                self.split_root_leaf_and_insert(&mut cursor, key, value);
             } else {
-                self.split_nonroot_leaf_and_insert(&mut cursor, key, value)?;
+                self.split_nonroot_leaf_and_insert(&mut cursor, key, value);
             }
         } else {
             leaf.insert_at_index(cursor.cell_num, key, value, entry_size);
@@ -217,11 +211,11 @@ impl Table {
         value: &[u8],
         parent: PageNum,
         max_leaf_cells: usize,
-    ) -> io::Result<(PageNum, usize)> {
-        let leaf = cursor.leaf(self)?;
+    ) -> (PageNum, usize) {
+        let leaf = cursor.leaf(self);
 
-        let new_leaf_page_num = self.pager.get_free_page()?;
-        let new_leaf_page = self.pager.get_page(new_leaf_page_num)?;
+        let new_leaf_page_num = self.pager.get_free_page();
+        let new_leaf_page = self.pager.get_page(new_leaf_page_num);
         let new_leaf = LeafNodeHeader::initialize(new_leaf_page, parent);
 
         let entry_size = self.entry_size;
@@ -248,25 +242,20 @@ impl Table {
             cursor.cell_num = cell_num;
         }
         let split_key = new_leaf.cell_unchecked(0, entry_size).key;
-        Ok((new_leaf_page_num, split_key))
+        (new_leaf_page_num, split_key)
     }
 
-    fn split_root_leaf_and_insert(
-        &mut self,
-        cursor: &mut Cursor,
-        key: usize,
-        value: &[u8],
-    ) -> io::Result<()> {
+    fn split_root_leaf_and_insert(&mut self, cursor: &mut Cursor, key: usize, value: &[u8]) {
         let old_leaf_page_num = cursor.page_num;
-        let new_internal_page_num = self.pager.get_free_page()?;
+        let new_internal_page_num = self.pager.get_free_page();
         self.set_root(new_internal_page_num);
 
         let max_leaf_cells = self.max_leaf_cells;
         // Split children into two new leaf nodes
         let (new_leaf_page_num, split_key) =
-            self.split_leaf_and_insert(cursor, key, value, new_internal_page_num, max_leaf_cells)?;
+            self.split_leaf_and_insert(cursor, key, value, new_internal_page_num, max_leaf_cells);
 
-        let new_internal_page = self.pager.get_page(new_internal_page_num)?;
+        let new_internal_page = self.pager.get_page(new_internal_page_num);
         InternalNodeHeader::initialize(
             new_internal_page,
             PageNum::NULL,
@@ -277,40 +266,29 @@ impl Table {
         // println!("Internal {:?}: \n{:?}", new_internal_page_num, new_internal);
         // println!("Leaf {:?}: \n{:?}", old_leaf_page_num, leaf.debug(entry_size));
         // println!("Leaf {:?}: \n{:?}", new_leaf_page_num, new_leaf.debug(entry_size));
-        Ok(())
     }
 
-    fn split_nonroot_leaf_and_insert(
-        &mut self,
-        cursor: &mut Cursor,
-        key: usize,
-        value: &[u8],
-    ) -> io::Result<()> {
-        let leaf = cursor.leaf(self)?;
+    fn split_nonroot_leaf_and_insert(&mut self, cursor: &mut Cursor, key: usize, value: &[u8]) {
+        let leaf = cursor.leaf(self);
         let max_leaf_cells = self.max_leaf_cells;
         let parent_page_num = leaf.parent_ptr;
         let parent = self
             .pager
-            .get_node(parent_page_num)?
+            .get_node(parent_page_num)
             .internal()
             .expect("Parent can't be leaf node");
         if parent.num_keys == INTERNAL_NODE_CELL_COUNT {
             if parent.is_root() {
-                let (new_leaf_page_num, leaf_split_key) = self.split_leaf_and_insert(
-                    cursor,
-                    key,
-                    value,
-                    parent_page_num,
-                    max_leaf_cells,
-                )?;
-                let new_root_page_num = self.pager.get_free_page()?;
+                let (new_leaf_page_num, leaf_split_key) =
+                    self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells);
+                let new_root_page_num = self.pager.get_free_page();
                 let (new_internal_page_num, internal_split_key) = self.split_internal_and_insert(
                     parent,
                     leaf_split_key,
                     new_leaf_page_num,
                     new_root_page_num,
-                )?;
-                let new_root_page = self.pager.get_page(new_root_page_num)?;
+                );
+                let new_root_page = self.pager.get_page(new_root_page_num);
                 let _new_root = InternalNodeHeader::initialize(
                     new_root_page,
                     PageNum::NULL,
@@ -330,15 +308,13 @@ impl Table {
                 //     .unwrap();
                 // println!("Right {:?}:\n{:?}", new_internal_page_num, right_internal);
                 self.set_root(new_root_page_num);
-                Ok(())
             } else {
                 unimplemented!("Don't know how to recursively insert to internal");
             }
         } else {
             let (new_leaf_page_num, split_key) =
-                self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells)?;
+                self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells);
             parent.insert(split_key, new_leaf_page_num);
-            Ok(())
         }
     }
 
@@ -352,10 +328,10 @@ impl Table {
         key: usize,
         ptr: PageNum,
         parent: PageNum,
-    ) -> io::Result<(PageNum, usize)> {
+    ) -> (PageNum, usize) {
         // println!("Old internal\n{:?}", internal);
-        let new_internal_page_num = self.pager.get_free_page()?;
-        let new_internal_page = self.pager.get_page(new_internal_page_num)?;
+        let new_internal_page_num = self.pager.get_free_page();
+        let new_internal_page = self.pager.get_page(new_internal_page_num);
         let new_internal = InternalNodeHeader::initialize_empty(new_internal_page, parent);
 
         let index = internal.find_index(key);
@@ -368,7 +344,7 @@ impl Table {
             let old_cell = internal.cell_unchecked(i);
             cell.clone_from(old_cell);
             let ptr = old_cell.ptr;
-            let node = self.pager.get_node(ptr)?;
+            let node = self.pager.get_node(ptr);
             match node {
                 NodeMut::InternalNode(internal) => internal.parent_ptr = new_internal_page_num,
                 NodeMut::LeafNode(leaf) => leaf.parent_ptr = new_internal_page_num,
@@ -377,7 +353,7 @@ impl Table {
         new_internal.num_keys = REST;
         new_internal.parent_ptr = parent;
         new_internal.right_child = internal.right_child;
-        let node = self.pager.get_node(internal.right_child)?;
+        let node = self.pager.get_node(internal.right_child);
         match node {
             NodeMut::InternalNode(internal) => internal.parent_ptr = new_internal_page_num,
             NodeMut::LeafNode(leaf) => leaf.parent_ptr = new_internal_page_num,
@@ -395,20 +371,20 @@ impl Table {
         } else {
             new_internal.insert(key, ptr);
             // Change the parent if we insert into the new one
-            let node = self.pager.get_node(ptr)?;
+            let node = self.pager.get_node(ptr);
             match node {
                 NodeMut::LeafNode(leaf) => leaf.parent_ptr = new_internal_page_num,
                 NodeMut::InternalNode(internal) => internal.parent_ptr = new_internal_page_num,
             }
         }
 
-        Ok((new_internal_page_num, split_key))
+        (new_internal_page_num, split_key)
     }
 }
 
 impl Drop for Table {
     fn drop(&mut self) {
-        self.pager.flush().expect("Failed to flush pager");
-        self.metadata.flush().expect("Failed to flush metadata");
+        self.pager.flush();
+        self.metadata.flush();
     }
 }

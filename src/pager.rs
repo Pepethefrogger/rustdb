@@ -121,20 +121,20 @@ impl Pager {
         };
         if num_pages == 0 {
             let root_page = PageNum(1);
-            let metadata_page = pager.get_page(PageNum(0))?;
+            let metadata_page = pager.get_page(PageNum(0));
             Page::initialize_metadata_page(metadata_page, root_page);
-            let root_page = pager.get_page(root_page)?;
+            let root_page = pager.get_page(root_page);
             LeafNodeHeader::initialize(root_page, PageNum::NULL);
         }
         Ok(pager)
     }
 
-    pub fn get_metadata(&mut self) -> io::Result<&mut MetadataPage> {
-        Ok(self.get_page(PageNum(0))?.metadata())
+    pub fn get_metadata(&mut self) -> &mut MetadataPage {
+        self.get_page(PageNum(0)).metadata()
     }
 
     #[allow(clippy::mut_from_ref)]
-    pub fn get_page(&self, page_num: PageNum) -> io::Result<&mut Page> {
+    pub fn get_page(&self, page_num: PageNum) -> &mut Page {
         assert!(page_num.0 < MAX_PAGES, "Can't request more than MAX_PAGES");
         let len = self.pages.borrow().len();
         if page_num.0 >= len {
@@ -145,30 +145,31 @@ impl Pager {
 
         let page_slot = unsafe { &mut *self.pages.borrow()[page_num.0].get() };
         match page_slot {
-            Some(page) => Ok(page),
+            Some(page) => page,
             None => {
                 let page = page_slot.insert(Page([0; 1024]));
                 if page_num.0 < self.num_pages {
                     let page_offset = page_num.0 * PAGE_SIZE;
-                    self.file.read_exact_at(&mut page.0, page_offset as u64)?;
+                    self.file
+                        .read_exact_at(&mut page.0, page_offset as u64)
+                        .expect("Failed to read file");
                 }
-                Ok(page_slot.as_mut().unwrap())
+                page_slot.as_mut().unwrap()
             }
         }
     }
 
-    pub fn get_node(&self, page_num: PageNum) -> io::Result<NodeMut<'_>> {
-        self.get_page(page_num)
-            .map(|p| p.page_header_mut().node_mut())
+    pub fn get_node(&self, page_num: PageNum) -> NodeMut<'_> {
+        self.get_page(page_num).page_header_mut().node_mut()
     }
 
-    pub fn get_free_page(&self) -> io::Result<PageNum> {
+    pub fn get_free_page(&self) -> PageNum {
         let page_num = PageNum(self.pages.borrow().len().max(self.num_pages));
-        self.get_page(page_num)?;
-        Ok(page_num)
+        self.get_page(page_num);
+        page_num
     }
 
-    pub fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) {
         let biggest_page_index = self
             .pages
             .borrow()
@@ -180,16 +181,19 @@ impl Pager {
             .expect("At least one page shouldn't be empty");
         if biggest_page_index >= self.num_pages {
             let file_size = (biggest_page_index - self.num_pages + 1) * PAGE_SIZE;
-            self.file.set_len(file_size as u64)?;
+            self.file
+                .set_len(file_size as u64)
+                .expect("Failed to set length");
         }
         for i in 0..=biggest_page_index {
             let page = unsafe { &*self.pages.borrow()[i].get() };
             if let Some(page) = page {
                 let page_location = i * PAGE_SIZE;
-                self.file.write_all_at(&page.0, page_location as u64)?;
+                self.file
+                    .write_all_at(&page.0, page_location as u64)
+                    .expect("Failed to write pager data");
             }
         }
-        self.file.sync_data()?;
-        Ok(())
+        self.file.sync_data().expect("Failed to sync pager");
     }
 }

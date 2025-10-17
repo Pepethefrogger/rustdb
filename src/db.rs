@@ -102,12 +102,12 @@ impl<'a> DB<'a> {
                 let mut cursor = table.find_cursor(0)?;
 
                 // TODO: Implement a better way to check if db is empty
-                if cursor.leaf(table)?.num_cells == 0 {
+                if cursor.leaf(table).num_cells == 0 {
                     return Ok(OperationResult::Entries(entries));
                 }
                 if let Some(skip) = statement.skip {
                     for _ in 0..skip {
-                        if !cursor.advance(table)? {
+                        if !cursor.advance(table) {
                             return Ok(OperationResult::Entries(entries));
                         }
                     }
@@ -119,10 +119,10 @@ impl<'a> DB<'a> {
                     if selected >= limit {
                         break;
                     }
-                    let data = cursor.value(table)?;
+                    let data = cursor.value(table);
                     let literals = fields.iter().map(|f| {
                         if f.primary {
-                            let id = cursor.cell(table).unwrap().key;
+                            let id = cursor.cell(table).key;
                             Literal::Uint(id)
                         } else {
                             f.read(data)
@@ -130,7 +130,7 @@ impl<'a> DB<'a> {
                     });
                     selected += 1;
                     entries.push(literals);
-                    if !cursor.advance(table)? {
+                    if !cursor.advance(table) {
                         break;
                     }
                 }
@@ -179,12 +179,12 @@ impl<'a> DB<'a> {
 
                 let mut cursor = table.find_cursor(0)?;
                 // TODO: Implement a better way to check if db is empty
-                if cursor.leaf(table)?.num_cells == 0 {
+                if cursor.leaf(table).num_cells == 0 {
                     return Ok(OperationResult::Count(0));
                 }
                 if let Some(skip) = statement.skip {
                     for _ in 0..skip {
-                        if !cursor.advance(table)? {
+                        if !cursor.advance(table) {
                             return Ok(OperationResult::Count(0));
                         }
                     }
@@ -196,12 +196,12 @@ impl<'a> DB<'a> {
                     if updated >= limit {
                         break;
                     }
-                    let data = cursor.value(table)?;
+                    let data = cursor.value(table);
                     for (field, literal) in fields.iter() {
                         field.write(literal, data);
                     }
                     updated += 1;
-                    if !cursor.advance(table)? {
+                    if !cursor.advance(table) {
                         break;
                     }
                 }

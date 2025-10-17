@@ -1,5 +1,3 @@
-use std::io;
-
 use crate::{
     pager::PageNum,
     table::{Table, node::Node},
@@ -9,8 +7,8 @@ fn print_with_indent(str: &str, indentation: usize) {
     println!("{:indent$}{}", "", str, indent = indentation * 4)
 }
 
-fn debug_node(table: &Table, page_num: PageNum, indentation: usize) -> io::Result<()> {
-    let node = table.pager.get_page(page_num)?.page_header().node();
+fn debug_node(table: &Table, page_num: PageNum, indentation: usize) {
+    let node = table.pager.get_page(page_num).page_header().node();
     match node {
         Node::InternalNode(internal) => {
             print_with_indent(
@@ -24,10 +22,10 @@ fn debug_node(table: &Table, page_num: PageNum, indentation: usize) -> io::Resul
                 let cell = internal.cell_unchecked(i);
                 let key = cell.key;
                 let child = cell.ptr;
-                debug_node(table, child, indentation + 2)?;
+                debug_node(table, child, indentation + 2);
                 print_with_indent(&format!("Key: {}", key), indentation + 1);
             }
-            debug_node(table, internal.right_child, indentation + 2)?;
+            debug_node(table, internal.right_child, indentation + 2);
         }
         Node::LeafNode(leaf) => {
             print_with_indent(
@@ -46,28 +44,25 @@ fn debug_node(table: &Table, page_num: PageNum, indentation: usize) -> io::Resul
             }
         }
     }
-    Ok(())
 }
 
-pub fn debug_table(table: &Table) -> io::Result<()> {
+pub fn debug_table(table: &Table) {
     let root = table.get_root();
-    debug_node(table, root, 0)?;
-    Ok(())
+    debug_node(table, root, 0);
 }
 
-pub fn debug_find(table: &Table, key: usize) -> io::Result<()> {
+pub fn debug_find(table: &Table, key: usize) {
     let mut page_num = table.get_root();
-    let mut node = table.pager.get_page(page_num)?.page_header().node();
+    let mut node = table.pager.get_page(page_num).page_header().node();
     println!("Searching for key {}", key);
     while let Node::InternalNode(internal) = node {
         let index = internal.find_index(key);
         println!("Internal: {:?}, found next at index {}", page_num, index);
         page_num = internal.find(key);
-        let page = table.pager.get_page(page_num)?;
+        let page = table.pager.get_page(page_num);
         node = page.page_header().node();
     }
     let leaf = node.leaf().unwrap();
     let index = leaf.find(key, table.entry_size);
     println!("Leaf: {:?}, found next at index {}", page_num, index);
-    Ok(())
 }
