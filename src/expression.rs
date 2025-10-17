@@ -1,7 +1,7 @@
 use crate::utils::range::Range;
 use crate::utils::range::SimpleRange;
 use crate::{range, simple_range};
-use std::{cmp::Ordering, io};
+use std::cmp::Ordering;
 
 use crate::query::{Identifier, Literal};
 
@@ -44,6 +44,7 @@ pub enum Expression<'a> {
         right: Literal<'a>,
         sym: Comparison,
     },
+    Empty,
 }
 
 impl<'a> Expression<'a> {
@@ -70,6 +71,7 @@ impl<'a> Expression<'a> {
                 r.field_recursive(v);
             }
             &Self::Binary { left, .. } => v.push(left),
+            Self::Empty => {}
         }
     }
 
@@ -85,66 +87,47 @@ impl<'a> Expression<'a> {
     /// This function uses an iterator of Literals that should come from the fields in self.fields
     /// to evaluate an expression
     /// Self::extract_index should be used before to get index constraints instead of filtering
-    pub fn eval(&self, iter: &mut impl Iterator<Item = &'a Literal<'a>>) -> io::Result<bool> {
+    pub fn eval(&self, iter: &mut impl Iterator<Item = Literal<'a>>) -> bool {
         match self {
-            Self::And(l, r) => Ok(l.eval(iter)? && r.eval(iter)?),
-            Self::Or(l, r) => Ok(l.eval(iter)? || r.eval(iter)?),
+            Self::And(l, r) => l.eval(iter) && r.eval(iter),
+            Self::Or(l, r) => l.eval(iter) || r.eval(iter),
             Self::Binary { right, sym, .. } => {
-                let left = iter.next().ok_or(io::Error::other("Ran out of fields"))?;
-                Ok(sym.eval(left, right))
+                let left = iter.next().expect("Ran out of fields in the iterator");
+                sym.eval(&left, right)
             }
+            Self::Empty => true,
         }
     }
 
     /// Strips all of the index comparisons into constraints
     /// This removes all references to the index from the expression
     /// Returns (Range, bool), where the bool represents if the expression is empty
-    pub fn extract_index(&mut self, index_name: &str) -> (Range<Literal<'a>>, bool) {
+    pub fn extract_index(&mut self, index_name: &str) -> Range<Literal<'a>> {
         match self {
             Expression::And(left, right) => {
-                let (l, l_remove) = left.extract_index(index_name);
-                let (r, r_remove) = right.extract_index(index_name);
+                let l = left.extract_index(index_name);
+                let r = right.extract_index(index_name);
                 let mut intersection = l;
                 intersection.intersection(r);
-
-                if l_remove && r_remove {
-                    (intersection, true)
-                } else if l_remove {
-                    *self = *right.clone();
-                    (intersection, false)
-                } else if r_remove {
-                    *self = *left.clone();
-                    (intersection, false)
-                } else {
-                    (intersection, false)
-                }
+                intersection
             }
             Expression::Or(left, right) => {
-                let (l, l_remove) = left.extract_index(index_name);
-                let (r, r_remove) = right.extract_index(index_name);
+                let l = left.extract_index(index_name);
+                let r = right.extract_index(index_name);
                 let mut union = l;
                 union.union(r);
-
-                if l_remove && r_remove {
-                    (union, true)
-                } else if l_remove {
-                    *self = *right.clone();
-                    (union, false)
-                } else if r_remove {
-                    *self = *left.clone();
-                    (union, false)
-                } else {
-                    (union, false)
-                }
+                union
             }
             Expression::Binary { left, right, sym } => {
                 if &(***left) == index_name {
                     let r = Range::from_comparison(*sym, *right);
-                    (r, true)
+                    *self = Expression::Empty;
+                    r
                 } else {
-                    (range!({,}), false)
+                    range!({,})
                 }
             }
+            Expression::Empty => range!({}),
         }
     }
 }
@@ -181,6 +164,9 @@ macro_rules! expression {
     ($x:tt < $y:tt) => {
         Expression::Binary { left: $x.into(), right: $y.into(), sym: Comparison::LessThan}
     };
+    ({}) => {
+        Expression::Empty
+    };
 }
 
 #[cfg(test)]
@@ -202,7 +188,7 @@ mod tests {
     fn test_true_expression() {
         let expr = expression!(("id" < 5usize) & ("test" > 10usize));
         let iter = [Literal::Uint(1), Literal::Uint(20)];
-        let res = expr.eval(&mut iter.iter()).unwrap();
+        let res = expr.eval(&mut iter.iter().copied());
         assert!(res, "This expression should return true")
     }
 
@@ -210,7 +196,7 @@ mod tests {
     fn test_false_expression() {
         let expr = expression!(("id" < 5usize) & ("test" > 10usize));
         let iter = [Literal::Uint(9), Literal::Uint(10)];
-        let res = expr.eval(&mut iter.iter()).unwrap();
+        let res = expr.eval(&mut iter.iter().copied());
         assert!(!res, "This expression should return false")
     }
 
@@ -223,14 +209,15 @@ mod tests {
             ((index < 10usize) & (field = 5usize)) | ((index > 20usize) & (field = 10usize))
         );
 
-        let (range, empty) = expr.extract_index(index);
-        assert!(!empty, "Expression shouldn't be empty");
-
+        let range = expr.extract_index(index);
         assert_eq!(
             range.buf,
             vec![simple_range!({,(10usize)}), simple_range!({(20usize),})]
         );
 
-        assert_eq!(expr, expression!((field = 5usize) | (field = 10usize)));
+        assert_eq!(
+            expr,
+            expression!(({} & (field = 5usize)) | ({} & (field = 10usize)))
+        );
     }
 }
