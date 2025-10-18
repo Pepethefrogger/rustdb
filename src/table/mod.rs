@@ -339,50 +339,9 @@ impl Table {
         let leaf = cursor.leaf(self);
         let max_leaf_cells = self.max_leaf_cells;
         let parent_page_num = leaf.parent_ptr;
-        let parent = self
-            .pager
-            .get_node(parent_page_num)
-            .internal()
-            .expect("Parent can't be leaf node");
-        if parent.num_keys == INTERNAL_NODE_CELL_COUNT {
-            if parent.is_root() {
-                let (new_leaf_page_num, leaf_split_key) =
-                    self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells);
-                let new_root_page_num = self.pager.get_free_page();
-                let (new_internal_page_num, internal_split_key) = self.split_internal_and_insert(
-                    parent,
-                    leaf_split_key,
-                    new_leaf_page_num,
-                    new_root_page_num,
-                );
-                let new_root_page = self.pager.get_page(new_root_page_num);
-                let _new_root = InternalNodeHeader::initialize(
-                    new_root_page,
-                    PageNum::NULL,
-                    internal_split_key,
-                    parent_page_num,
-                    new_internal_page_num,
-                );
-
-                // println!("Inserting {}: {:?}", leaf_split_key, new_leaf_page_num);
-                // println!("New root {:?}:\n{:?}", new_root_page_num, _new_root);
-                // println!("Left {:?}:\n{:?}", parent_page_num, parent);
-                // let right_internal_page = self.pager.get_page(new_internal_page_num)?;
-                // let right_internal = right_internal_page
-                //     .page_header_mut()
-                //     .node_mut()
-                //     .internal()
-                //     .unwrap();
-                // println!("Right {:?}:\n{:?}", new_internal_page_num, right_internal);
-                self.set_root(new_root_page_num);
-            } else {
-                unimplemented!("Don't know how to recursively insert to internal");
-            }
-        } else {
-            let (new_leaf_page_num, split_key) =
-                self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells);
-            parent.insert(split_key, new_leaf_page_num);
-        }
+        let (new_leaf_page_num, leaf_split_key) =
+            self.split_leaf_and_insert(cursor, key, value, parent_page_num, max_leaf_cells);
+        self.insert_internal_recursive(parent_page_num, leaf_split_key, new_leaf_page_num);
     }
 
     /// Creates a new internal node, copies cells from self to other until self has split_count cells
@@ -446,6 +405,59 @@ impl Table {
         }
 
         (new_internal_page_num, split_key)
+    }
+
+    /// Recursively inserts an entry into internal nodes. If the node is full, it splits and
+    /// inserts the new entry into the parent and so on
+    fn insert_internal_recursive(
+        &mut self,
+        internal_page_num: PageNum,
+        split_key: usize,
+        ptr: PageNum,
+    ) {
+        let internal = self
+            .pager
+            .get_node(internal_page_num)
+            .internal()
+            .expect("Parent should be internal");
+        if internal.num_keys == INTERNAL_NODE_CELL_COUNT {
+            if internal.is_root() {
+                let new_root_page_num = self.pager.get_free_page();
+                let (new_internal_page_num, internal_split_key) =
+                    self.split_internal_and_insert(internal, split_key, ptr, new_root_page_num);
+                let new_root_page = self.pager.get_page(new_root_page_num);
+                let _new_root = InternalNodeHeader::initialize(
+                    new_root_page,
+                    PageNum::NULL,
+                    internal_split_key,
+                    internal_page_num,
+                    new_internal_page_num,
+                );
+
+                // println!("Inserting {}: {:?}", split_key, ptr);
+                // println!("New root {:?}:\n{:?}", new_root_page_num, _new_root);
+                // println!("Left {:?}:\n{:?}", parent_page_num, parent);
+                // let right_internal_page = self.pager.get_page(new_internal_page_num)?;
+                // let right_internal = right_internal_page
+                //     .page_header_mut()
+                //     .node_mut()
+                //     .internal()
+                //     .unwrap();
+                // println!("Right {:?}:\n{:?}", new_internal_page_num, right_internal);
+                self.set_root(new_root_page_num);
+            } else {
+                let parent_page_num = internal.parent_ptr;
+                let (new_internal_page_num, internal_split_key) =
+                    self.split_internal_and_insert(internal, split_key, ptr, parent_page_num);
+                self.insert_internal_recursive(
+                    parent_page_num,
+                    internal_split_key,
+                    new_internal_page_num,
+                );
+            }
+        } else {
+            internal.insert(split_key, ptr);
+        }
     }
 }
 

@@ -103,7 +103,7 @@ impl<'page> PageHeader<'page> {
 pub struct MetadataPage {}
 
 // TODO: Change pager from using a vec to something else
-const MAX_PAGES: usize = 256;
+const MAX_PAGES: usize = 1024 * 1024;
 pub struct Pager {
     file: fs::File,
     num_pages: usize,

@@ -16,7 +16,7 @@ fn check_range(table: &mut Table, range: Range<usize>) {
     range.for_each(|e| {
         let bytes = table.find(e).unwrap();
         let data = usize::from_ne_bytes(bytes.read_all().try_into().expect("Data didn't fit"));
-        // println!("Retrieved {} from index {}, should be {}", data, e, e);
+        println!("Retrieved {} from index {}, should be {}", data, e, e);
         assert_eq!(data, e);
     });
 }
@@ -150,6 +150,24 @@ fn test_split_internal_node() {
     );
 
     let entries = 0usize..max_entries;
+    insert_range(&mut table, entries.clone());
+    debug_table(&table);
+    check_range(&mut table, entries);
+}
+
+#[test]
+fn test_lots_of_entries() {
+    let data_file = tempfile().unwrap();
+    let metadata_file = tempfile().unwrap();
+    let mut table = Table::create(
+        data_file,
+        metadata_file,
+        ("id", Type::Uint),
+        &[("name", Type::Uint)],
+    )
+    .unwrap();
+
+    let entries = 0usize..100000;
     insert_range(&mut table, entries.clone());
     debug_table(&table);
     check_range(&mut table, entries);
